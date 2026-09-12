@@ -1,17 +1,19 @@
 import 'dart:io';
 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
 import 'app/agent_app.dart';
 import 'app/controller_app.dart';
+import 'firebase_options.dart';
 
-void main() {
-  runApp(_rootForPlatform());
-}
-
-Widget _rootForPlatform() {
-  if (Platform.isAndroid || Platform.isIOS) {
-    return const ControllerApp();
+Future<void> main() async {
+  final isController = Platform.isAndroid || Platform.isIOS;
+  if (isController) {
+    WidgetsFlutterBinding.ensureInitialized();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
   }
-  return const AgentApp();
+  runApp(isController ? const ControllerApp() : const AgentApp());
 }
