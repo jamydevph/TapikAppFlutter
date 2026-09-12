@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "122717187271",
+    "project_id": "tapikapp-f71d5",
+    "storage_bucket": "tapikapp-f71d5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:122717187271:android:749bcef876c7359d4062e2",
+        "android_client_info": {
+          "package_name": "com.jamydevph.tapikapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDSmkGM71kXipAhxYGQ_ts2Tq5Awh6XQqc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

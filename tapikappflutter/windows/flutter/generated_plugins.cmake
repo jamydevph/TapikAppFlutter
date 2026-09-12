@@ -4,6 +4,9 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   bonsoir_windows
+  cloud_firestore
+  firebase_auth
+  firebase_core
   screen_retriever_windows
   tray_manager
   window_manager
