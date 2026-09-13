@@ -3,12 +3,15 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../core/error/failure.dart';
 import '../models/user_model.dart';
 import '../sources/firebase_auth_source.dart';
+import '../sources/firestore_source.dart';
 
 class AuthRepository {
-  AuthRepository({FirebaseAuthSource? source})
-      : _source = source ?? FirebaseAuthSource();
+  AuthRepository({FirebaseAuthSource? source, FirestoreSource? firestore})
+      : _source = source ?? FirebaseAuthSource(),
+        _firestore = firestore ?? FirestoreSource();
 
   final FirebaseAuthSource _source;
+  final FirestoreSource _firestore;
 
   Stream<UserModel?> authStateChanges() {
     return _source.authStateChanges().map(
@@ -22,11 +25,13 @@ class AuthRepository {
   }
 
   Future<UserModel> signUp({required String email, required String password}) {
-    return _guard(
-      () async => UserModel.fromFirebaseUser(
+    return _guard(() async {
+      final user = UserModel.fromFirebaseUser(
         await _source.signUp(email: email, password: password),
-      ),
-    );
+      );
+      await _firestore.writeUserProfile(user);
+      return user;
+    });
   }
 
   Future<UserModel> signIn({required String email, required String password}) {
