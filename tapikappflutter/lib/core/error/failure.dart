@@ -8,6 +8,10 @@ class AuthFailure extends Failure {
   const AuthFailure(super.message);
 }
 
+class DataFailure extends Failure {
+  const DataFailure(super.message);
+}
+
 class TransportFailure extends Failure {
   const TransportFailure(super.message);
 }
