@@ -45,4 +45,27 @@ class FirestoreSource {
   Future<void> deleteDevice(String uid, String deviceId) {
     return _devices(uid).doc(deviceId).delete();
   }
+
+  DocumentReference<Map<String, dynamic>> _preferences(String uid) {
+    return _firestore
+        .collection('users')
+        .doc(uid)
+        .collection('settings')
+        .doc('preferences');
+  }
+
+  Future<DocumentSnapshot<Map<String, dynamic>>> getSettings(String uid) {
+    return _preferences(uid).get();
+  }
+
+  Stream<DocumentSnapshot<Map<String, dynamic>>> watchSettings(String uid) {
+    return _preferences(uid).snapshots();
+  }
+
+  Future<void> setSettings(String uid, Map<String, dynamic> data) {
+    return _preferences(uid).set({
+      ...data,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
 }
