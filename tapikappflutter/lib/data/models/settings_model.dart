@@ -1,7 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:equatable/equatable.dart';
 
-enum AppThemeMode { light, dark, system }
+import '../../core/theme/app_theme_mode.dart';
 
 class SettingsModel extends Equatable {
   const SettingsModel({
@@ -32,7 +32,7 @@ class SettingsModel extends Equatable {
       ),
       naturalScrolling: data['naturalScrolling'] as bool? ?? true,
       hapticFeedback: data['hapticFeedback'] as bool? ?? true,
-      themeMode: _themeModeFrom(data['themeMode'] as String?),
+      themeMode: AppThemeMode.fromName(data['themeMode'] as String?),
     );
   }
 
@@ -61,13 +61,6 @@ class SettingsModel extends Equatable {
 
   static double _clampSensitivity(double value) {
     return value.clamp(minSensitivity, maxSensitivity).toDouble();
-  }
-
-  static AppThemeMode _themeModeFrom(String? value) {
-    return AppThemeMode.values.firstWhere(
-      (mode) => mode.name == value,
-      orElse: () => AppThemeMode.system,
-    );
   }
 
   @override

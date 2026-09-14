@@ -5,15 +5,20 @@ import 'package:flutter/material.dart';
 
 import 'app/agent_app.dart';
 import 'app/controller_app.dart';
+import 'features/settings/view_model/theme_cubit.dart';
 import 'firebase_options.dart';
 
 Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   final isController = Platform.isAndroid || Platform.isIOS;
-  if (isController) {
-    WidgetsFlutterBinding.ensureInitialized();
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+  if (!isController) {
+    runApp(const AgentApp());
+    return;
   }
-  runApp(isController ? const ControllerApp() : const AgentApp());
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  final themeCubit = ThemeCubit();
+  await themeCubit.load();
+  runApp(ControllerApp(themeCubit: themeCubit));
 }
