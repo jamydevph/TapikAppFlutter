@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:tapikappflutter/core/error/failure.dart';
+import 'package:tapikappflutter/core/theme/app_theme_mode.dart';
 import 'package:tapikappflutter/data/models/device_model.dart';
 import 'package:tapikappflutter/data/models/settings_model.dart';
 import 'package:tapikappflutter/data/repositories/auth_repository.dart';
