@@ -52,7 +52,7 @@ class _LogoMarkPainter extends CustomPainter {
     canvas.scale(scale);
     final rect = RRect.fromRectAndRadius(
       const Rect.fromLTWH(0, 0, _designSize, _designSize),
-      const Radius.circular(_cornerRadius),
+      Radius.circular(_cornerRadius / scale),
     );
     if (glow) {
       final shadow = AppShadows.glowPrimary.first;

@@ -114,9 +114,9 @@ class AppTheme {
         errorStyle: AppTextStyles.caption.copyWith(color: colors.textDanger),
         border: _fieldBorder(colors.borderDefault),
         enabledBorder: _fieldBorder(colors.borderDefault),
-        focusedBorder: _fieldBorder(colors.borderFocus, width: 2),
+        focusedBorder: _fieldBorder(colors.borderFocus, width: 1.5),
         errorBorder: _fieldBorder(colors.borderDanger),
-        focusedErrorBorder: _fieldBorder(colors.borderDanger, width: 2),
+        focusedErrorBorder: _fieldBorder(colors.borderDanger, width: 1.5),
         disabledBorder: _fieldBorder(colors.borderDefault),
       ),
     );
