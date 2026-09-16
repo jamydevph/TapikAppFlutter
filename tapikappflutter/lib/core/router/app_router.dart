@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/app_shell.dart';
+import '../../features/auth/view/splash_page.dart';
 import '../../features/connect/view/connect_page.dart';
 import '../../features/keyboard/view/keyboard_page.dart';
 import '../../features/presenter/view/presenter_page.dart';
@@ -12,13 +13,25 @@ import 'app_routes.dart';
 class AppRouter {
   AppRouter({GoRouterRedirect? redirect, Listenable? refreshListenable})
       : router = GoRouter(
-          initialLocation: AppRoutes.connect,
+          initialLocation: AppRoutes.splash,
           redirect: redirect,
           refreshListenable: refreshListenable,
           routes: [
+            GoRoute(
+              path: AppRoutes.splash,
+              pageBuilder: (context, state) {
+                return NoTransitionPage(
+                  key: state.pageKey,
+                  child: const SplashPage(),
+                );
+              },
+            ),
             StatefulShellRoute.indexedStack(
-              builder: (context, state, navigationShell) {
-                return AppShell(navigationShell: navigationShell);
+              pageBuilder: (context, state, navigationShell) {
+                return NoTransitionPage(
+                  key: state.pageKey,
+                  child: AppShell(navigationShell: navigationShell),
+                );
               },
               branches: [
                 _branch(AppRoutes.connect, const ConnectPage()),

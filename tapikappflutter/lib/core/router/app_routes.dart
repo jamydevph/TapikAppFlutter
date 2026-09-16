@@ -1,6 +1,7 @@
 class AppRoutes {
   const AppRoutes._();
 
+  static const String splash = '/';
   static const String connect = '/connect';
   static const String trackpad = '/trackpad';
   static const String keyboard = '/keyboard';
