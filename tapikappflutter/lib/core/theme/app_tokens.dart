@@ -56,7 +56,9 @@ class AppComponentSizes {
   const AppComponentSizes._();
 
   static const double buttonHeight = 52;
+  static const double textFieldHeight = 56;
   static const double logoMark = 88;
+  static const double logoMarkCompact = 56;
 }
 
 class AppBrand {

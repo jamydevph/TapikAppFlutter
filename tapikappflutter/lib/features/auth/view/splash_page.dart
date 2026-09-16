@@ -29,7 +29,7 @@ class _SplashPageState extends State<SplashPage> {
   void initState() {
     super.initState();
     _handoff = Timer(SplashPage.holdDuration, () {
-      if (mounted) context.go(AppRoutes.connect);
+      if (mounted) context.go(AppRoutes.login);
     });
   }
 

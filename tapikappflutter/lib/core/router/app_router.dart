@@ -2,6 +2,9 @@ import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../app/app_shell.dart';
+import '../../features/auth/view/forgot_password_page.dart';
+import '../../features/auth/view/login_page.dart';
+import '../../features/auth/view/signup_page.dart';
 import '../../features/auth/view/splash_page.dart';
 import '../../features/connect/view/connect_page.dart';
 import '../../features/keyboard/view/keyboard_page.dart';
@@ -25,6 +28,23 @@ class AppRouter {
                   child: const SplashPage(),
                 );
               },
+            ),
+            GoRoute(
+              path: AppRoutes.login,
+              pageBuilder: (context, state) {
+                return NoTransitionPage(
+                  key: state.pageKey,
+                  child: const LoginPage(),
+                );
+              },
+            ),
+            GoRoute(
+              path: AppRoutes.signup,
+              builder: (context, state) => const SignupPage(),
+            ),
+            GoRoute(
+              path: AppRoutes.forgotPassword,
+              builder: (context, state) => const ForgotPasswordPage(),
             ),
             StatefulShellRoute.indexedStack(
               pageBuilder: (context, state, navigationShell) {
