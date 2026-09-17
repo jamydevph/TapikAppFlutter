@@ -6,6 +6,7 @@ import '../../../core/router/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/theme/app_typography.dart';
+import '../../../core/validation/validators.dart';
 import '../../../core/widgets/app_text_field.dart';
 import '../../../core/widgets/logo_mark.dart';
 import '../view_model/auth_cubit.dart';
@@ -36,32 +37,19 @@ class _LoginPageState extends State<LoginPage> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _authError = null);
     context.read<AuthCubit>().signIn(
-          email: _email.text.trim(),
-          password: _password.text,
-        );
+      email: _email.text.trim(),
+      password: _password.text,
+    );
   }
 
   void _clearAuthError(String _) {
     if (_authError != null) setState(() => _authError = null);
   }
 
-  String? _validateEmail(String? value) {
-    final email = value?.trim() ?? '';
-    if (email.isEmpty) return 'Enter your email address.';
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
-      return 'Enter a valid email address.';
-    }
-    return null;
-  }
-
-  String? _validatePassword(String? value) {
-    if (value == null || value.isEmpty) return 'Enter your password.';
-    return null;
-  }
-
   @override
   Widget build(BuildContext context) {
     return BlocConsumer<AuthCubit, AuthState>(
+      listenWhen: (_, _) => ModalRoute.of(context)?.isCurrent ?? true,
       listener: (context, state) {
         switch (state) {
           case Authenticated():
@@ -86,9 +74,7 @@ class _LoginPageState extends State<LoginPage> {
                     constraints: BoxConstraints(
                       minHeight: constraints.maxHeight,
                     ),
-                    child: IntrinsicHeight(
-                      child: _buildForm(context, loading),
-                    ),
+                    child: IntrinsicHeight(child: _buildForm(context, loading)),
                   ),
                 );
               },
@@ -130,23 +116,27 @@ class _LoginPageState extends State<LoginPage> {
               helperText: 'We’ll never share your email.',
               keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.next,
-              autofillHints: const [AutofillHints.username, AutofillHints.email],
+              autofillHints: const [
+                AutofillHints.username,
+                AutofillHints.email,
+              ],
               autocorrect: false,
               enabled: !loading,
-              validator: _validateEmail,
+              validator: Validators.email,
               onChanged: _clearAuthError,
             ),
             const SizedBox(height: AppSpacing.sm),
             AppTextField(
               label: 'Password',
               controller: _password,
-              helperText: 'At least 8 characters.',
+              helperText: 'At least ${AuthCubit.minPasswordLength} characters.',
               errorText: _authError,
               obscureText: true,
               textInputAction: TextInputAction.done,
               autofillHints: const [AutofillHints.password],
               enabled: !loading,
-              validator: _validatePassword,
+              validator: (value) =>
+                  Validators.required(value, 'Enter your password.'),
               onChanged: _clearAuthError,
               onSubmitted: (_) => _submit(),
             ),
@@ -198,7 +188,9 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(width: AppSpacing.xs - AppSpacing.x3s),
                   _LinkText(
                     'Create an account',
-                    onTap: loading ? null : () => context.push(AppRoutes.signup),
+                    onTap: loading
+                        ? null
+                        : () => context.push(AppRoutes.signup),
                   ),
                 ],
               ),

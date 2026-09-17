@@ -10,6 +10,8 @@ class AuthRepository {
       : _source = source ?? FirebaseAuthSource(),
         _firestore = firestore ?? FirestoreSource();
 
+  static const int minPasswordLength = 8;
+
   final FirebaseAuthSource _source;
   final FirestoreSource _firestore;
 
@@ -70,7 +72,7 @@ class AuthRepository {
       case 'email-already-in-use':
         return 'An account already exists for that email.';
       case 'weak-password':
-        return 'That password is too weak (use at least 6 characters).';
+        return 'That password is too weak (use at least $minPasswordLength characters).';
       case 'operation-not-allowed':
         return 'Email and password sign-in is not enabled.';
       case 'too-many-requests':
