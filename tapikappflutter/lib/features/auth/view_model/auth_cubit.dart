@@ -11,6 +11,8 @@ class AuthCubit extends Cubit<AuthState> {
         _prefs = prefs ?? LocalPrefsSource(),
         super(const AuthInitial());
 
+  static const int minPasswordLength = AuthRepository.minPasswordLength;
+
   final AuthRepository _repository;
   final LocalPrefsSource _prefs;
 
