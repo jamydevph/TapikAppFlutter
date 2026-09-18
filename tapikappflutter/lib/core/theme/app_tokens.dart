@@ -28,6 +28,12 @@ class AppRadius {
   static const double full = 999;
 }
 
+class AppOpacity {
+  const AppOpacity._();
+
+  static const double disabled = 0.55;
+}
+
 class AppShadows {
   const AppShadows._();
 
