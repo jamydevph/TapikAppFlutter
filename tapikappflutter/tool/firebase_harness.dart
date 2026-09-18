@@ -17,6 +17,8 @@ import 'package:tapikappflutter/data/sources/firestore_source.dart';
 import 'package:tapikappflutter/data/sources/local_prefs_source.dart';
 import 'package:tapikappflutter/features/auth/view_model/auth_cubit.dart';
 import 'package:tapikappflutter/features/auth/view_model/auth_state.dart';
+import 'package:tapikappflutter/features/auth/view_model/password_reset_cubit.dart';
+import 'package:tapikappflutter/features/auth/view_model/password_reset_state.dart';
 import 'package:tapikappflutter/firebase_options.dart';
 
 Future<void> main() async {
@@ -96,10 +98,14 @@ class FirebaseHarness {
   final FirebaseAuthSource auth = FirebaseAuthSource();
   final CountingFirestoreSource firestore = CountingFirestoreSource();
   final LocalPrefsSource prefs = LocalPrefsSource();
+  late final AuthRepository authRepository =
+      AuthRepository(source: auth, firestore: firestore);
   late final AuthCubit cubit = AuthCubit(
-    repository: AuthRepository(source: auth, firestore: firestore),
+    repository: authRepository,
     prefs: prefs,
   );
+  late final PasswordResetCubit passwordResetCubit =
+      PasswordResetCubit(authRepository);
   late final DeviceRepository devices =
       DeviceRepository(auth: auth, firestore: firestore);
   late final SettingsRepository settings = SettingsRepository(
@@ -178,7 +184,9 @@ class FirebaseHarness {
   }
 
   Future<String> passwordReset() async {
-    await cubit.sendPasswordReset(email);
+    await passwordResetCubit.send(email);
+    final state = passwordResetCubit.state;
+    check(state is PasswordResetSent, 'Expected PasswordResetSent, got $state');
     return 'request accepted for $email (delivery not verifiable here)';
   }
 
@@ -333,6 +341,7 @@ class FirebaseHarness {
       }
       await settings.dispose();
       await cubit.close();
+      await passwordResetCubit.close();
     }
     if (errors.isNotEmpty) {
       throw HarnessFailure([...notes, ...errors].join(' · '));

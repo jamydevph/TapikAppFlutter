@@ -6,6 +6,7 @@ import '../../data/repositories/device_repository.dart';
 import '../../data/repositories/settings_repository.dart';
 import '../../data/sources/local_prefs_source.dart';
 import '../../features/auth/view_model/auth_cubit.dart';
+import '../../features/auth/view_model/password_reset_cubit.dart';
 import '../../features/settings/view_model/theme_cubit.dart';
 
 class AppProviders extends StatelessWidget {
@@ -17,6 +18,10 @@ class AppProviders extends StatelessWidget {
 
   final ThemeCubit themeCubit;
   final Widget child;
+
+  static PasswordResetCubit passwordResetCubit(BuildContext context) {
+    return PasswordResetCubit(context.read<AuthRepository>());
+  }
 
   @override
   Widget build(BuildContext context) {

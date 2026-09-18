@@ -44,7 +44,9 @@ class AppRouter {
             ),
             GoRoute(
               path: AppRoutes.forgotPassword,
-              builder: (context, state) => const ForgotPasswordPage(),
+              builder: (context, state) => ForgotPasswordPage(
+                initialEmail: state.extra as String?,
+              ),
             ),
             StatefulShellRoute.indexedStack(
               pageBuilder: (context, state, navigationShell) {

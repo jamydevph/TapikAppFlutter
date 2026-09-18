@@ -17,7 +17,7 @@ class AppTextStyles {
     fontSize: 34,
     height: 42 / 34,
     fontWeight: FontWeight.w700,
-    letterSpacing: 0,
+    letterSpacing: -0.6,
   );
 
   static const TextStyle displayL = TextStyle(
@@ -25,7 +25,7 @@ class AppTextStyles {
     fontSize: 28,
     height: 36 / 28,
     fontWeight: FontWeight.w600,
-    letterSpacing: 0,
+    letterSpacing: -0.4,
   );
 
   static const TextStyle headingXl = TextStyle(
@@ -33,7 +33,7 @@ class AppTextStyles {
     fontSize: 24,
     height: 32 / 24,
     fontWeight: FontWeight.w600,
-    letterSpacing: 0,
+    letterSpacing: -0.3,
   );
 
   static const TextStyle headingL = TextStyle(
@@ -41,7 +41,7 @@ class AppTextStyles {
     fontSize: 20,
     height: 28 / 20,
     fontWeight: FontWeight.w600,
-    letterSpacing: 0,
+    letterSpacing: -0.2,
   );
 
   static const TextStyle headingM = TextStyle(
@@ -49,7 +49,7 @@ class AppTextStyles {
     fontSize: 17,
     height: 24 / 17,
     fontWeight: FontWeight.w600,
-    letterSpacing: 0,
+    letterSpacing: -0.1,
   );
 
   static const TextStyle bodyL = TextStyle(
@@ -89,7 +89,7 @@ class AppTextStyles {
     fontSize: 14,
     height: 18 / 14,
     fontWeight: FontWeight.w500,
-    letterSpacing: 0,
+    letterSpacing: 0.1,
   );
 
   static const TextStyle labelS = TextStyle(
@@ -97,7 +97,7 @@ class AppTextStyles {
     fontSize: 12,
     height: 16 / 12,
     fontWeight: FontWeight.w500,
-    letterSpacing: 0,
+    letterSpacing: 0.3,
   );
 
   static const TextStyle caption = TextStyle(
@@ -105,7 +105,7 @@ class AppTextStyles {
     fontSize: 11,
     height: 14 / 11,
     fontWeight: FontWeight.w400,
-    letterSpacing: 0,
+    letterSpacing: 0.2,
   );
 
   static const TextStyle overline = TextStyle(
@@ -113,7 +113,7 @@ class AppTextStyles {
     fontSize: 11,
     height: 14 / 11,
     fontWeight: FontWeight.w600,
-    letterSpacing: 0,
+    letterSpacing: 1.4,
   );
 
   static const TextStyle monoCode = TextStyle(
@@ -121,7 +121,7 @@ class AppTextStyles {
     fontSize: 40,
     height: 48 / 40,
     fontWeight: FontWeight.w700,
-    letterSpacing: 0,
+    letterSpacing: 8,
   );
 
   static const TextStyle monoS = TextStyle(

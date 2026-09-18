@@ -85,7 +85,9 @@ class AppTheme {
         style: OutlinedButton.styleFrom(
           foregroundColor: colors.textPrimary,
           backgroundColor: colors.surface,
-          disabledForegroundColor: colors.textTertiary,
+          disabledForegroundColor: colors.textTertiary.withValues(
+            alpha: AppOpacity.disabled,
+          ),
           side: BorderSide(color: colors.borderDefault),
           minimumSize: const Size(64, AppComponentSizes.buttonHeight),
           shape: buttonShape,
@@ -95,7 +97,9 @@ class AppTheme {
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
           foregroundColor: colors.accent,
-          disabledForegroundColor: colors.textTertiary,
+          disabledForegroundColor: colors.textTertiary.withValues(
+            alpha: AppOpacity.disabled,
+          ),
           minimumSize: const Size(64, AppComponentSizes.buttonHeight),
           shape: buttonShape,
           textStyle: AppTextStyles.labelL,

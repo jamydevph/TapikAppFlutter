@@ -8,7 +8,9 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/validation/validators.dart';
+import '../../../core/widgets/app_back_button.dart';
 import '../../../core/widgets/app_checkbox.dart';
+import '../../../core/widgets/app_primary_button.dart';
 import '../../../core/widgets/app_text_field.dart';
 import '../view_model/auth_cubit.dart';
 import '../view_model/auth_state.dart';
@@ -130,7 +132,7 @@ class _SignupPageState extends State<SignupPage> {
             const SizedBox(height: AppSpacing.xs),
             Align(
               alignment: Alignment.centerLeft,
-              child: _BackButton(onPressed: loading ? null : _backToSignIn),
+              child: AppBackButton(onPressed: loading ? null : _backToSignIn),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text('Create your account', style: AppTextStyles.displayL),
@@ -198,17 +200,10 @@ class _SignupPageState extends State<SignupPage> {
               ),
             ),
             const SizedBox(height: AppSpacing.xl),
-            FilledButton(
-              onPressed: loading || !_agreed ? null : _submit,
-              child: loading
-                  ? SizedBox.square(
-                      dimension: AppSpacing.lg,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: colors.textTertiary,
-                      ),
-                    )
-                  : const Text('Create account'),
+            AppPrimaryButton(
+              label: 'Create account',
+              onPressed: _agreed ? _submit : null,
+              loading: loading,
             ),
             const Spacer(),
             const SizedBox(height: AppSpacing.xl),
@@ -246,32 +241,6 @@ class _SignupPageState extends State<SignupPage> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _BackButton extends StatelessWidget {
-  const _BackButton({required this.onPressed});
-
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
-    return IconButton(
-      onPressed: onPressed,
-      tooltip: 'Back',
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(
-        width: AppSpacing.x4l,
-        height: AppSpacing.x4l,
-      ),
-      alignment: Alignment.centerLeft,
-      icon: Icon(
-        Icons.arrow_back_ios_new_rounded,
-        size: AppSpacing.md,
-        color: onPressed == null ? colors.textTertiary : colors.textSecondary,
       ),
     );
   }

@@ -7,6 +7,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/validation/validators.dart';
+import '../../../core/widgets/app_primary_button.dart';
 import '../../../core/widgets/app_text_field.dart';
 import '../../../core/widgets/logo_mark.dart';
 import '../view_model/auth_cubit.dart';
@@ -44,6 +45,11 @@ class _LoginPageState extends State<LoginPage> {
 
   void _clearAuthError(String _) {
     if (_authError != null) setState(() => _authError = null);
+  }
+
+  void _forgotPassword() {
+    final email = _email.text.trim();
+    context.push(AppRoutes.forgotPassword, extra: email.isEmpty ? null : email);
   }
 
   @override
@@ -145,23 +151,14 @@ class _LoginPageState extends State<LoginPage> {
               alignment: Alignment.centerRight,
               child: _LinkText(
                 'Forgot password?',
-                onTap: loading
-                    ? null
-                    : () => context.push(AppRoutes.forgotPassword),
+                onTap: loading ? null : _forgotPassword,
               ),
             ),
             const SizedBox(height: AppSpacing.x2l - AppSpacing.x3s),
-            FilledButton(
-              onPressed: loading ? null : _submit,
-              child: loading
-                  ? SizedBox.square(
-                      dimension: AppSpacing.lg,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: colors.textTertiary,
-                      ),
-                    )
-                  : const Text('Sign in'),
+            AppPrimaryButton(
+              label: 'Sign in',
+              onPressed: _submit,
+              loading: loading,
             ),
             const SizedBox(height: AppSpacing.lg + AppSpacing.x3s),
             Text(
