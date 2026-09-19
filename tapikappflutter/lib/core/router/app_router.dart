@@ -7,6 +7,7 @@ import '../../features/auth/view/login_page.dart';
 import '../../features/auth/view/signup_page.dart';
 import '../../features/auth/view/splash_page.dart';
 import '../../features/connect/view/connect_page.dart';
+import '../../features/connect/view/pairing_code_page.dart';
 import '../../features/keyboard/view/keyboard_page.dart';
 import '../../features/presenter/view/presenter_page.dart';
 import '../../features/settings/view/settings_page.dart';
@@ -46,6 +47,12 @@ class AppRouter {
               path: AppRoutes.forgotPassword,
               builder: (context, state) => ForgotPasswordPage(
                 initialEmail: state.extra as String?,
+              ),
+            ),
+            GoRoute(
+              path: AppRoutes.pairing,
+              builder: (context, state) => PairingCodePage(
+                deviceName: state.extra as String?,
               ),
             ),
             StatefulShellRoute.indexedStack(
