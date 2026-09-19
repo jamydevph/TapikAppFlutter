@@ -70,6 +70,16 @@ class AppTheme {
         thickness: 1,
         space: 1,
       ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: colors.elevated,
+        modalBackgroundColor: colors.elevated,
+        surfaceTintColor: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(AppRadius.x2l),
+          ),
+        ),
+      ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           backgroundColor: colors.primary,
@@ -84,7 +94,7 @@ class AppTheme {
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: colors.textPrimary,
-          backgroundColor: colors.surface,
+          backgroundColor: colors.surfaceAlt,
           disabledForegroundColor: colors.textTertiary.withValues(
             alpha: AppOpacity.disabled,
           ),
