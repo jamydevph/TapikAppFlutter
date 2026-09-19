@@ -19,7 +19,10 @@ class AppShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: navigationShell,
+      body: MediaQuery.withClampedTextScaling(
+        maxScaleFactor: AppTabBar.maxTextScale,
+        child: navigationShell,
+      ),
       bottomNavigationBar: AppTabBar(
         items: tabs,
         currentIndex: navigationShell.currentIndex,

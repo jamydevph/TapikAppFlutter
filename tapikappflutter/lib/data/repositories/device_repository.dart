@@ -46,11 +46,20 @@ class DeviceRepository {
   }
 
   Stream<List<DeviceModel>> watchDevices() {
-    return _firestore.watchDevices(_requireUid()).map(
+    return _firestore
+        .watchDevices(_requireUid())
+        .map(
           (snapshot) => snapshot.docs
               .map((doc) => DeviceModel.fromFirestore(doc))
               .toList(),
-        );
+        )
+        .handleError(_rethrowAsDataFailure);
+  }
+
+  Never _rethrowAsDataFailure(Object error) {
+    throw error is FirebaseException
+        ? DataFailure(_messageForCode(error.code))
+        : const DataFailure('Something went wrong. Please try again.');
   }
 
   Future<void> revokeDevice(String deviceId) {
