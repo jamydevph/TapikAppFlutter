@@ -9,6 +9,7 @@ import '../../features/auth/view_model/auth_cubit.dart';
 import '../../features/auth/view_model/password_reset_cubit.dart';
 import '../../features/connect/view_model/connect_cubit.dart';
 import '../../features/settings/view_model/theme_cubit.dart';
+import '../../features/trackpad/view_model/trackpad_cubit.dart';
 
 class AppProviders extends StatelessWidget {
   const AppProviders({
@@ -26,6 +27,10 @@ class AppProviders extends StatelessWidget {
 
   static ConnectCubit connectCubit(BuildContext context) {
     return ConnectCubit(context.read<DeviceRepository>());
+  }
+
+  static TrackpadCubit trackpadCubit(BuildContext context) {
+    return TrackpadCubit(context.read<SettingsRepository>());
   }
 
   @override
