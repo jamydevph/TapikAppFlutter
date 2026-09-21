@@ -26,6 +26,11 @@ class _TrackpadView extends StatelessWidget {
   const _TrackpadView();
 
   static const double surfaceMinHeight = 200;
+  static const double trackRowHeight = AppSpacing.lg;
+  static const double sliderHitHeight = AppSpacing.x4l;
+  static const double sliderLift = (sliderHitHeight - trackRowHeight) / 2;
+  static const double bottomInset =
+      AppSpacing.x4l + AppSpacing.xs - sliderLift * 2;
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +45,7 @@ class _TrackpadView extends StatelessWidget {
               AppSpacing.xl,
               AppSpacing.xs + AppSpacing.x3s,
               AppSpacing.xl,
-              AppSpacing.x4l + AppSpacing.xs,
+              bottomInset,
             ),
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -100,18 +105,21 @@ class _TrackpadView extends StatelessWidget {
                               color: colors.textTertiary,
                             ),
                           ),
-                          SizedBox(
-                            height: AppSpacing.lg,
-                            child: AppSlider(
-                              value: state.sensitivity,
-                              min: TrackpadCubit.minSensitivity,
-                              max: TrackpadCubit.maxSensitivity,
-                              label: 'Sensitivity',
-                              semanticFormatter: (value) =>
-                                  '${value.toStringAsFixed(1)}×',
-                              onChanged: context
-                                  .read<TrackpadCubit>()
-                                  .setSensitivity,
+                          Transform.translate(
+                            offset: const Offset(0, -sliderLift),
+                            child: SizedBox(
+                              height: sliderHitHeight,
+                              child: AppSlider(
+                                value: state.sensitivity,
+                                min: TrackpadCubit.minSensitivity,
+                                max: TrackpadCubit.maxSensitivity,
+                                label: 'Sensitivity',
+                                semanticFormatter: (value) =>
+                                    '${value.toStringAsFixed(1)}×',
+                                onChanged: context
+                                    .read<TrackpadCubit>()
+                                    .setSensitivity,
+                              ),
                             ),
                           ),
                         ],

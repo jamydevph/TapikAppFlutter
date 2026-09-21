@@ -6,7 +6,9 @@ import 'package:image/image.dart' as img;
 
 const String outputDir = 'assets/branding';
 const String windowsIconPath = 'windows/runner/resources/app_icon.ico';
+const String trayIconPath = '$outputDir/tray_icon.ico';
 const List<int> windowsIconSizes = [16, 24, 32, 48, 64, 128, 256];
+const List<int> trayIconSizes = [16, 24, 32, 48];
 
 const double markSize = 88;
 const double markRadius = 28;
@@ -14,6 +16,10 @@ const double glyphStroke = 5;
 
 const Rgb primary = Rgb(0x7C, 0x5C, 0xFF);
 const Rgb onPrimary = Rgb(0xFF, 0xFF, 0xFF);
+const Rgb template = Rgb(0x00, 0x00, 0x00);
+
+const int trayIconSize = 36;
+const double trayIconInset = 3;
 
 const double glowOffsetY = 6;
 const double glowBlur = 20;
@@ -31,6 +37,7 @@ Future<void> main() async {
     'icon_desktop.png': _renderDesktopIcon(mark),
     'splash_mark.png': _renderSplashMark(mark),
     'splash_android12.png': _renderAndroid12Icon(mark),
+    'tray_icon.png': _renderTrayIcon(mark),
   };
   Directory(outputDir).createSync(recursive: true);
   for (final entry in outputs.entries) {
@@ -38,13 +45,19 @@ Future<void> main() async {
     File(path).writeAsBytesSync(img.encodePng(entry.value));
     stdout.writeln('wrote $path (${entry.value.width}x${entry.value.height})');
   }
-  File(windowsIconPath).writeAsBytesSync(_encodeWindowsIcon(outputs['icon_desktop.png']!));
+  File(windowsIconPath).writeAsBytesSync(
+    _encodeWindowsIcon(outputs['icon_desktop.png']!, windowsIconSizes),
+  );
   stdout.writeln('wrote $windowsIconPath (${windowsIconSizes.join(', ')})');
+  File(trayIconPath).writeAsBytesSync(
+    _encodeWindowsIcon(outputs['icon_desktop.png']!, trayIconSizes),
+  );
+  stdout.writeln('wrote $trayIconPath (${trayIconSizes.join(', ')})');
 }
 
-Uint8List _encodeWindowsIcon(img.Image source) {
+Uint8List _encodeWindowsIcon(img.Image source, List<int> sizes) {
   final frames = [
-    for (final size in windowsIconSizes)
+    for (final size in sizes)
       img.copyResize(
         source,
         width: size,
@@ -100,6 +113,19 @@ img.Image _renderAndroid12Icon(LogoMark mark) {
   return canvas.toImage();
 }
 
+img.Image _renderTrayIcon(LogoMark mark) {
+  final canvas = Canvas(trayIconSize, bleed: template);
+  final bounds = mark.glyphBounds;
+  final scale = (trayIconSize - trayIconInset * 2) / bounds.height;
+  final placement = Placement(
+    scale: scale,
+    dx: (trayIconSize - bounds.width * scale) / 2 - bounds.left * scale,
+    dy: (trayIconSize - bounds.height * scale) / 2 - bounds.top * scale,
+  );
+  canvas.paint(mark.glyph, placement, template);
+  return canvas.toImage();
+}
+
 void _paintGlowingMark(Canvas canvas, LogoMark mark, Placement placement) {
   final glow = placement.shifted(dy: glowOffsetY * placement.scale);
   canvas.paint(
@@ -126,14 +152,42 @@ typedef Sdf = double Function(double x, double y);
 class LogoMark {
   LogoMark()
       : tile = RoundedSquare(size: markSize, radius: markRadius).distance,
-        glyph = Union([
-          Arc.fromChord(x0: 26, x1: 58, y: 23, radius: 18.7, stroke: glyphStroke),
-          Arc.fromChord(x0: 30, x1: 54, y: 34, radius: 15, stroke: glyphStroke),
-          Circle(cx: 33, cy: 55, radius: 9),
-        ]).distance;
+        glyph = Union([outerArc, innerArc, dot]).distance;
+
+  static final Arc outerArc =
+      Arc.fromChord(x0: 26, x1: 58, y: 23, radius: 18.7, stroke: glyphStroke);
+  static final Arc innerArc =
+      Arc.fromChord(x0: 30, x1: 54, y: 34, radius: 15, stroke: glyphStroke);
+  static const Circle dot = Circle(cx: 33, cy: 55, radius: 9);
 
   final Sdf tile;
   final Sdf glyph;
+
+  Bounds get glyphBounds {
+    return Bounds(
+      left: outerArc.x0 - glyphStroke / 2,
+      top: outerArc.cy - outerArc.radius - glyphStroke / 2,
+      right: outerArc.x1 + glyphStroke / 2,
+      bottom: dot.cy + dot.radius,
+    );
+  }
+}
+
+class Bounds {
+  const Bounds({
+    required this.left,
+    required this.top,
+    required this.right,
+    required this.bottom,
+  });
+
+  final double left;
+  final double top;
+  final double right;
+  final double bottom;
+
+  double get width => right - left;
+  double get height => bottom - top;
 }
 
 abstract class Shape {
