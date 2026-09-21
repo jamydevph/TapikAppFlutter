@@ -6,7 +6,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/widgets/app_slider.dart';
-import '../../../core/widgets/status_pill.dart';
+import '../../../core/widgets/connection_header.dart';
 import '../view_model/trackpad_cubit.dart';
 import '../view_model/trackpad_state.dart';
 
@@ -25,8 +25,6 @@ class TrackpadPage extends StatelessWidget {
 class _TrackpadView extends StatelessWidget {
   const _TrackpadView();
 
-  static const String noDeviceTitle = 'No laptop connected';
-  static const double headerHeight = 26;
   static const double surfaceMinHeight = 200;
 
   @override
@@ -55,26 +53,16 @@ class _TrackpadView extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          SizedBox(
-                            height: headerHeight,
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    state.deviceName ?? noDeviceTitle,
-                                    style: AppTextStyles.labelM.copyWith(
-                                      color: connected
-                                          ? colors.textPrimary
-                                          : colors.textSecondary,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                const SizedBox(width: AppSpacing.sm),
-                                _ConnectionPill(connection: state.connection),
-                              ],
-                            ),
+                          ConnectionHeader(
+                            deviceName: state.deviceName,
+                            status: switch (state.connection) {
+                              TrackpadConnection.connected =>
+                                ConnectionHeaderStatus.connected,
+                              TrackpadConnection.connecting =>
+                                ConnectionHeaderStatus.connecting,
+                              TrackpadConnection.disconnected =>
+                                ConnectionHeaderStatus.offline,
+                            },
                           ),
                           const SizedBox(height: AppSpacing.lg),
                           Expanded(
@@ -140,30 +128,6 @@ class _TrackpadView extends StatelessWidget {
   }
 }
 
-class _ConnectionPill extends StatelessWidget {
-  const _ConnectionPill({required this.connection});
-
-  final TrackpadConnection connection;
-
-  @override
-  Widget build(BuildContext context) {
-    return switch (connection) {
-      TrackpadConnection.connected => const StatusPill(
-        label: 'CONNECTED',
-        tone: StatusPillTone.success,
-      ),
-      TrackpadConnection.connecting => const StatusPill(
-        label: 'CONNECTING',
-        tone: StatusPillTone.accent,
-      ),
-      TrackpadConnection.disconnected => const StatusPill(
-        label: 'OFFLINE',
-        tone: StatusPillTone.muted,
-      ),
-    };
-  }
-}
-
 class _GestureSurface extends StatelessWidget {
   const _GestureSurface();
 
@@ -199,7 +163,7 @@ class _GestureSurface extends StatelessWidget {
               style: AppTextStyles.bodyS.copyWith(color: colors.textTertiary),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: AppSpacing.x2s + 2),
+            const SizedBox(height: AppSpacing.x2s + AppSpacing.x3s),
             Text(
               'Two fingers to scroll · Hold to drag',
               style: AppTextStyles.caption.copyWith(color: colors.textTertiary),
