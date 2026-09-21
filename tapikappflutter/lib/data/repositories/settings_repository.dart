@@ -29,6 +29,7 @@ class SettingsRepository {
   final Map<String, int> _pendingStamps = <String, int>{};
 
   SettingsModel _current = SettingsModel.defaults;
+  bool _loaded = false;
   String? _uid;
   Timer? _debounceTimer;
   int _generation = 0;
@@ -36,6 +37,8 @@ class SettingsRepository {
   int _inFlightGeneration = -1;
 
   SettingsModel get current => _current;
+
+  bool get loaded => _loaded;
 
   bool get hasPendingWrite => _pending.isNotEmpty;
 
@@ -52,6 +55,7 @@ class SettingsRepository {
       _pending.clear();
       _pendingStamps.clear();
       _current = SettingsModel.defaults;
+      _loaded = false;
       _uid = user.uid;
     }
     return user.uid;
@@ -181,7 +185,9 @@ class SettingsRepository {
 
   void _adoptRemote(SettingsModel remote) {
     final merged = SettingsModel.fromMap({...remote.toMap(), ..._pending});
-    if (merged == _current) {
+    final firstLoad = !_loaded;
+    _loaded = true;
+    if (merged == _current && !firstLoad) {
       return;
     }
     _current = merged;

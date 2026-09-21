@@ -8,6 +8,7 @@ import '../../data/sources/local_prefs_source.dart';
 import '../../features/auth/view_model/auth_cubit.dart';
 import '../../features/auth/view_model/password_reset_cubit.dart';
 import '../../features/connect/view_model/connect_cubit.dart';
+import '../../features/settings/view_model/settings_cubit.dart';
 import '../../features/settings/view_model/theme_cubit.dart';
 import '../../features/trackpad/view_model/trackpad_cubit.dart';
 
@@ -31,6 +32,13 @@ class AppProviders extends StatelessWidget {
 
   static TrackpadCubit trackpadCubit(BuildContext context) {
     return TrackpadCubit(context.read<SettingsRepository>());
+  }
+
+  static SettingsCubit settingsCubit(BuildContext context) {
+    return SettingsCubit(
+      context.read<SettingsRepository>(),
+      context.read<DeviceRepository>(),
+    );
   }
 
   @override
