@@ -68,10 +68,20 @@ class AgentWindow extends StatelessWidget {
                           ),
                           _PhoneCard(
                             phoneName: state.connectedPhone,
+                            packetCount: state.packetCount,
                             onDisconnect: state.hasConnection
                                 ? cubit.disconnect
                                 : null,
                           ),
+                          if (state.error != null) ...[
+                            const SizedBox(height: AppSpacing.xs),
+                            Text(
+                              state.error!,
+                              style: AppTextStyles.caption.copyWith(
+                                color: colors.textDanger,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: AppSpacing.xl),
                           const SectionLabel('STARTUP'),
                           const SizedBox(
@@ -83,9 +93,6 @@ class AgentWindow extends StatelessWidget {
                                 title: 'Launch at login',
                                 subtitle:
                                     'Start the agent when you sign in to this $machine.',
-                                onTap: () => cubit.setLaunchAtLogin(
-                                  !state.launchAtLogin,
-                                ),
                                 trailing: AppSwitch(
                                   value: state.launchAtLogin,
                                   onChanged: cubit.setLaunchAtLogin,
@@ -214,13 +221,28 @@ class _CodeSlot extends StatelessWidget {
 }
 
 class _PhoneCard extends StatelessWidget {
-  const _PhoneCard({required this.phoneName, required this.onDisconnect});
+  const _PhoneCard({
+    required this.phoneName,
+    required this.packetCount,
+    required this.onDisconnect,
+  });
 
   static const double badgeSize = AppSpacing.x4l;
   static const double glyphSize = AppSpacing.xl;
 
   final String? phoneName;
+  final int packetCount;
   final VoidCallback? onDisconnect;
+
+  static String _formatCount(int count) {
+    final digits = count.toString();
+    final buffer = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 == 0) buffer.write(',');
+      buffer.write(digits[i]);
+    }
+    return '$buffer packet${count == 1 ? '' : 's'}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -245,7 +267,8 @@ class _PhoneCard extends StatelessWidget {
           ),
           title: phoneName ?? AgentWindow.noPhoneTitle,
           subtitle: connected
-              ? AgentWindow.connectedHint
+              ? '${AgentWindow.connectedHint} · '
+                    '${_formatCount(packetCount)} received'
               : AgentWindow.noPhoneHint,
           trailing: connected
               ? const StatusPill(
