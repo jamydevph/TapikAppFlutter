@@ -9,6 +9,8 @@ class AgentState extends Equatable {
     this.pairingCode,
     this.connectedPhone,
     this.launchAtLogin = false,
+    this.packetCount = 0,
+    this.error,
   });
 
   final String hostName;
@@ -18,6 +20,8 @@ class AgentState extends Equatable {
   final String? pairingCode;
   final String? connectedPhone;
   final bool launchAtLogin;
+  final int packetCount;
+  final String? error;
 
   bool get hasConnection => connectedPhone != null;
 
@@ -26,6 +30,8 @@ class AgentState extends Equatable {
     String? Function()? pairingCode,
     String? Function()? connectedPhone,
     bool? launchAtLogin,
+    int? packetCount,
+    String? Function()? error,
   }) {
     return AgentState(
       hostName: hostName,
@@ -37,6 +43,8 @@ class AgentState extends Equatable {
           ? this.connectedPhone
           : connectedPhone(),
       launchAtLogin: launchAtLogin ?? this.launchAtLogin,
+      packetCount: packetCount ?? this.packetCount,
+      error: error == null ? this.error : error(),
     );
   }
 
@@ -49,5 +57,7 @@ class AgentState extends Equatable {
     pairingCode,
     connectedPhone,
     launchAtLogin,
+    packetCount,
+    error,
   ];
 }
