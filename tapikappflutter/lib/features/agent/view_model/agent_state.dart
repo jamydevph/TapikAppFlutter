@@ -1,5 +1,7 @@
 import 'package:equatable/equatable.dart';
 
+import '../../../services/injector/injector.dart';
+
 class AgentState extends Equatable {
   const AgentState({
     required this.hostName,
@@ -11,6 +13,7 @@ class AgentState extends Equatable {
     this.launchAtLogin = false,
     this.packetCount = 0,
     this.error,
+    this.permission = InjectorPermission.denied,
   });
 
   final String hostName;
@@ -22,6 +25,7 @@ class AgentState extends Equatable {
   final bool launchAtLogin;
   final int packetCount;
   final String? error;
+  final InjectorPermission permission;
 
   bool get hasConnection => connectedPhone != null;
 
@@ -32,6 +36,7 @@ class AgentState extends Equatable {
     bool? launchAtLogin,
     int? packetCount,
     String? Function()? error,
+    InjectorPermission? permission,
   }) {
     return AgentState(
       hostName: hostName,
@@ -45,6 +50,7 @@ class AgentState extends Equatable {
       launchAtLogin: launchAtLogin ?? this.launchAtLogin,
       packetCount: packetCount ?? this.packetCount,
       error: error == null ? this.error : error(),
+      permission: permission ?? this.permission,
     );
   }
 
@@ -59,5 +65,6 @@ class AgentState extends Equatable {
     launchAtLogin,
     packetCount,
     error,
+    permission,
   ];
 }
