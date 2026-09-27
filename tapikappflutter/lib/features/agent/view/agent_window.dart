@@ -10,19 +10,40 @@ import '../../../core/widgets/app_tab_bar.dart';
 import '../../../core/widgets/logo_mark.dart';
 import '../../../core/widgets/settings_group.dart';
 import '../../../core/widgets/status_pill.dart';
+import '../../../services/injector/injector.dart';
 import '../view_model/agent_cubit.dart';
 import '../view_model/agent_state.dart';
 
 class AgentWindow extends StatelessWidget {
   const AgentWindow({super.key});
 
-  static const Size windowSize = Size(400, 640);
+  static const Size windowSize = Size(400, 760);
   static const String pairingHint =
       'A code appears here when a new phone asks to pair.';
   static const String noPhoneTitle = 'No phone connected';
   static const String noPhoneHint =
       'Open Tapikapp on your phone and pick this laptop.';
   static const String connectedHint = 'Connected over Wi-Fi';
+
+  static String _accessTitle(InjectorPermission permission) {
+    return switch (permission) {
+      InjectorPermission.granted => 'Tapikapp can control this computer',
+      InjectorPermission.denied => 'Tapikapp cannot move the cursor yet',
+      InjectorPermission.unsupported => 'Control is not available here',
+    };
+  }
+
+  static String _accessHint(InjectorPermission permission, String machine) {
+    return switch (permission) {
+      InjectorPermission.granted =>
+        'Your phone can move the pointer and click.',
+      InjectorPermission.denied =>
+        'Allow Tapikapp under Accessibility so it can move this '
+            "$machine's pointer.",
+      InjectorPermission.unsupported =>
+        'This build cannot send input to the system.',
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +103,38 @@ class AgentWindow extends StatelessWidget {
                               ),
                             ),
                           ],
+                          const SizedBox(height: AppSpacing.xl),
+                          const SectionLabel('CONTROL ACCESS'),
+                          const SizedBox(
+                            height: AppSpacing.xs + AppSpacing.x3s,
+                          ),
+                          SettingsGroup(
+                            children: [
+                              SettingRow(
+                                title: _accessTitle(state.permission),
+                                subtitle: _accessHint(
+                                  state.permission,
+                                  machine,
+                                ),
+                                trailing: switch (state.permission) {
+                                  InjectorPermission.granted =>
+                                    const StatusPill(
+                                      label: 'ALLOWED',
+                                      tone: StatusPillTone.success,
+                                    ),
+                                  InjectorPermission.denied => OutlinedButton(
+                                    onPressed: cubit.grantAccessibility,
+                                    child: const Text('Allow'),
+                                  ),
+                                  InjectorPermission.unsupported =>
+                                    const StatusPill(
+                                      label: 'UNAVAILABLE',
+                                      tone: StatusPillTone.muted,
+                                    ),
+                                },
+                              ),
+                            ],
+                          ),
                           const SizedBox(height: AppSpacing.xl),
                           const SectionLabel('STARTUP'),
                           const SizedBox(

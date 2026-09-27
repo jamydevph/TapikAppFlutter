@@ -9,6 +9,7 @@ import 'features/agent/view/agent_window.dart';
 import 'features/settings/view_model/theme_cubit.dart';
 import 'firebase_options.dart';
 import 'services/desktop/desktop_shell.dart';
+import 'services/injector/macos_injector.dart';
 import 'services/server/agent_server.dart';
 
 Future<void> main() async {
@@ -16,14 +17,22 @@ Future<void> main() async {
   final isController = Platform.isAndroid || Platform.isIOS;
   if (!isController) {
     final server = AgentServer();
+    final injector = MacosInjector.open();
+    final input = server.packets.listen(injector.handle);
     final shell = DesktopShell(
       contentSize: AgentWindow.windowSize,
-      onQuit: server.dispose,
+      onQuit: () async {
+        injector.releaseAll();
+        await input.cancel();
+        injector.dispose();
+        await server.dispose();
+      },
     );
     await shell.initialize();
     runApp(
       AgentApp(
         server: server,
+        injector: injector,
         hostName: _hostName(),
         platformLabel: _desktopPlatformLabel(),
         isMacOS: Platform.isMacOS,

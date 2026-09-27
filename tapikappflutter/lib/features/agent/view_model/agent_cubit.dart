@@ -3,17 +3,20 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/error/failure.dart';
+import '../../../services/injector/injector.dart';
 import '../../../services/server/agent_server.dart';
 import 'agent_state.dart';
 
 class AgentCubit extends Cubit<AgentState> {
   AgentCubit({
     required AgentServer server,
+    required Injector injector,
     required String hostName,
     required String platformLabel,
     required bool isMacOS,
   }) : this._(
          server,
+         injector,
          AgentState(
            hostName: hostName,
            platformLabel: platformLabel,
@@ -21,21 +24,35 @@ class AgentCubit extends Cubit<AgentState> {
          ),
        );
 
-  AgentCubit._(this._server, super.initial);
+  AgentCubit._(this._server, this._injector, super.initial);
 
   static const Duration counterInterval = Duration(milliseconds: 250);
 
   final AgentServer _server;
+  final Injector _injector;
   StreamSubscription<AgentServerState>? _link;
   Timer? _counter;
 
   Future<void> start() async {
     await _link?.cancel();
     _link = _server.states.listen(_onServer);
+    emit(state.copyWith(permission: _injector.refreshPermission()));
     try {
       await _server.start();
     } on Failure catch (failure) {
       emit(state.copyWith(error: () => failure.message));
+    }
+  }
+
+  Future<void> grantAccessibility() async {
+    await _injector.requestPermission();
+    emit(state.copyWith(permission: _injector.refreshPermission()));
+  }
+
+  void refreshPermission() {
+    final permission = _injector.refreshPermission();
+    if (permission != state.permission) {
+      emit(state.copyWith(permission: permission));
     }
   }
 
@@ -59,6 +76,7 @@ class AgentCubit extends Cubit<AgentState> {
       ),
     );
     if (server.hasClient) {
+      refreshPermission();
       _counter ??= Timer.periodic(counterInterval, _tickCounter);
     } else {
       _counter?.cancel();
