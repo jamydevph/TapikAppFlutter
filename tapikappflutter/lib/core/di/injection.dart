@@ -11,6 +11,10 @@ import '../../features/connect/view_model/connect_cubit.dart';
 import '../../features/settings/view_model/settings_cubit.dart';
 import '../../features/settings/view_model/theme_cubit.dart';
 import '../../features/trackpad/view_model/trackpad_cubit.dart';
+import '../../services/discovery/bonsoir_discovery.dart';
+import '../../services/discovery/discovery.dart';
+import '../../services/transport/network_transport.dart';
+import '../../services/transport/transport.dart';
 
 class AppProviders extends StatelessWidget {
   const AppProviders({
@@ -27,7 +31,11 @@ class AppProviders extends StatelessWidget {
   }
 
   static ConnectCubit connectCubit(BuildContext context) {
-    return ConnectCubit(context.read<DeviceRepository>());
+    return ConnectCubit(
+      context.read<DeviceRepository>(),
+      context.read<AgentBrowser>(),
+      context.read<Transport>(),
+    );
   }
 
   static TrackpadCubit trackpadCubit(BuildContext context) {
@@ -51,6 +59,14 @@ class AppProviders extends StatelessWidget {
         RepositoryProvider(
           create: (_) => SettingsRepository(),
           dispose: (repository) => repository.dispose(),
+        ),
+        RepositoryProvider<AgentBrowser>(
+          create: (_) => BonsoirBrowser(),
+          dispose: (browser) => browser.dispose(),
+        ),
+        RepositoryProvider<Transport>(
+          create: (_) => NetworkTransport(),
+          dispose: (transport) => transport.dispose(),
         ),
       ],
       child: MultiBlocProvider(

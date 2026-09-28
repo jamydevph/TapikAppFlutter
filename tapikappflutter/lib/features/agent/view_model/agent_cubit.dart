@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/error/failure.dart';
+import '../../../services/discovery/discovery.dart';
 import '../../../services/injector/injector.dart';
 import '../../../services/server/agent_server.dart';
 import 'agent_state.dart';
@@ -11,12 +12,14 @@ class AgentCubit extends Cubit<AgentState> {
   AgentCubit({
     required AgentServer server,
     required Injector injector,
+    required AgentAdvertiser advertiser,
     required String hostName,
     required String platformLabel,
     required bool isMacOS,
   }) : this._(
          server,
          injector,
+         advertiser,
          AgentState(
            hostName: hostName,
            platformLabel: platformLabel,
@@ -24,12 +27,13 @@ class AgentCubit extends Cubit<AgentState> {
          ),
        );
 
-  AgentCubit._(this._server, this._injector, super.initial);
+  AgentCubit._(this._server, this._injector, this._advertiser, super.initial);
 
   static const Duration counterInterval = Duration(milliseconds: 250);
 
   final AgentServer _server;
   final Injector _injector;
+  final AgentAdvertiser _advertiser;
   StreamSubscription<AgentServerState>? _link;
   Timer? _counter;
 
@@ -39,6 +43,12 @@ class AgentCubit extends Cubit<AgentState> {
     emit(state.copyWith(permission: _injector.refreshPermission()));
     try {
       await _server.start();
+    } on Failure catch (failure) {
+      emit(state.copyWith(error: () => failure.message));
+      return;
+    }
+    try {
+      await _advertiser.start();
     } on Failure catch (failure) {
       emit(state.copyWith(error: () => failure.message));
     }
@@ -95,6 +105,7 @@ class AgentCubit extends Cubit<AgentState> {
   Future<void> close() async {
     _counter?.cancel();
     await _link?.cancel();
+    await _advertiser.stop();
     return super.close();
   }
 }

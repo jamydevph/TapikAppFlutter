@@ -18,6 +18,8 @@ class TransportEndpoint {
 abstract class Transport {
   TransportState get state;
 
+  TransportEndpoint? get endpoint;
+
   Stream<TransportState> get states;
 
   Stream<Packet> get incoming;

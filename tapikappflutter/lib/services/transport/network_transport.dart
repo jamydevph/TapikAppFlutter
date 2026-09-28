@@ -26,6 +26,7 @@ class NetworkTransport implements Transport {
   final PacketBuffer _buffer = PacketBuffer();
 
   TransportState _state = TransportState.disconnected;
+  TransportEndpoint? _endpoint;
   Socket? _socket;
   RawDatagramSocket? _datagrams;
   StreamSubscription<Uint8List>? _reader;
@@ -37,6 +38,9 @@ class NetworkTransport implements Transport {
 
   @override
   TransportState get state => _state;
+
+  @override
+  TransportEndpoint? get endpoint => _endpoint;
 
   @override
   Stream<TransportState> get states => _states.stream;
@@ -52,6 +56,7 @@ class NetworkTransport implements Transport {
     final generation = ++_generation;
     await _teardown();
     if (_isStale(generation)) return;
+    _endpoint = endpoint;
     _emit(TransportState.connecting);
     Socket? socket;
     RawDatagramSocket? datagrams;
@@ -169,6 +174,7 @@ class NetworkTransport implements Transport {
     _socket = null;
     _datagrams = null;
     _address = null;
+    _endpoint = null;
     _buffer.clear();
     await reader?.cancel();
     await datagramReader?.cancel();
