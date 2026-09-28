@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 
+import '../../core/protocol/keycodes.dart';
 import '../../core/protocol/packet.dart';
 import 'injector.dart';
 
@@ -69,6 +70,26 @@ typedef _ScrollEventCreate = Pointer<Void> Function(
   int,
 );
 
+typedef _KeyEventCreateNative = Pointer<Void> Function(
+  Pointer<Void>,
+  Uint16,
+  Bool,
+);
+typedef _KeyEventCreate = Pointer<Void> Function(Pointer<Void>, int, bool);
+
+typedef _SetUnicodeNative = Void Function(
+  Pointer<Void>,
+  UintPtr,
+  Pointer<Uint16>,
+);
+typedef _SetUnicode = void Function(Pointer<Void>, int, Pointer<Uint16>);
+
+typedef _SetFlagsNative = Void Function(Pointer<Void>, Uint64);
+typedef _SetFlags = void Function(Pointer<Void>, int);
+
+typedef _GetFlagsNative = Uint64 Function(Pointer<Void>);
+typedef _GetFlags = int Function(Pointer<Void>);
+
 typedef _SetFieldNative = Void Function(Pointer<Void>, Uint32, Int64);
 typedef _SetField = void Function(Pointer<Void>, int, int);
 
@@ -127,6 +148,11 @@ class MacosInjector implements Injector {
   static const int _eventOtherDown = 25;
   static const int _eventOtherUp = 26;
   static const int _eventOtherDragged = 27;
+  static const int flagShift = 0x00020000;
+  static const int flagControl = 0x00040000;
+  static const int flagOption = 0x00080000;
+  static const int flagCommand = 0x00100000;
+  static const int _maxTextUnits = 512;
   static const int _fieldDeltaX = 4;
   static const int _fieldDeltaY = 5;
   static const int _maxDisplays = 8;
@@ -147,6 +173,7 @@ class MacosInjector implements Injector {
 
   final _Bindings _bindings;
   final Set<PointerButton> _held = <PointerButton>{};
+  final Set<int> _heldKeys = <int>{};
 
   final Stopwatch _clock = Stopwatch()..start();
 
@@ -197,8 +224,10 @@ class MacosInjector implements Injector {
           _button(button, down);
         case ScrollPacket(:final dx, :final dy):
           _scroll(dx, dy);
-        case KeyPacket():
-        case TextPacket():
+        case KeyPacket(:final keyCode, :final modifiers, :final down):
+          _key(keyCode, modifiers, down);
+        case TextPacket(:final text):
+          _text(text);
         case PingPacket():
           return;
       }
@@ -214,6 +243,25 @@ class MacosInjector implements Injector {
     if (_disposed) return;
     for (final button in _held.toList()) {
       _button(button, false);
+    }
+    for (final usage in _heldKeys.toList()) {
+      _key(usage, KeyModifiers.none, false);
+    }
+    for (final usage in const [
+      Keycodes.usageLeftCommand,
+      Keycodes.usageLeftOption,
+      Keycodes.usageLeftShift,
+      Keycodes.usageLeftControl,
+    ]) {
+      final virtualKey = Keycodes.macos(usage);
+      if (virtualKey == null) continue;
+      final event = _bindings.keyEventCreate(
+        _ensureSource(),
+        virtualKey,
+        false,
+      );
+      if (event == nullptr) continue;
+      _post(event);
     }
   }
 
@@ -346,6 +394,70 @@ class MacosInjector implements Injector {
     return refreshPermission() == InjectorPermission.granted;
   }
 
+  void _key(int usage, KeyModifiers modifiers, bool down) {
+    final virtualKey = Keycodes.macos(usage);
+    if (virtualKey == null) return;
+    final event = _bindings.keyEventCreate(_ensureSource(), virtualKey, down);
+    if (event == nullptr) return;
+    _applyFlags(event, modifiers);
+    _post(event);
+    if (down) {
+      _heldKeys.add(usage);
+    } else {
+      _heldKeys.remove(usage);
+    }
+  }
+
+  void _text(String text) {
+    if (text.isEmpty) return;
+    final units = text.codeUnits;
+    var start = 0;
+    while (start < units.length) {
+      var end = start + _maxTextUnits < units.length
+          ? start + _maxTextUnits
+          : units.length;
+      if (end < units.length && _isHighSurrogate(units[end - 1])) {
+        end -= 1;
+      }
+      _typeChunk(units.sublist(start, end));
+      start = end;
+    }
+  }
+
+  static bool _isHighSurrogate(int unit) => unit >= 0xD800 && unit <= 0xDBFF;
+
+  void _typeChunk(List<int> units) {
+    final buffer = calloc<Uint16>(units.length);
+    try {
+      for (var i = 0; i < units.length; i++) {
+        buffer[i] = units[i];
+      }
+      for (final down in [true, false]) {
+        final event = _bindings.keyEventCreate(_ensureSource(), 0, down);
+        if (event == nullptr) continue;
+        _bindings.setUnicode(event, units.length, buffer);
+        _post(event);
+      }
+    } finally {
+      calloc.free(buffer);
+    }
+  }
+
+  void _applyFlags(Pointer<Void> event, KeyModifiers modifiers) {
+    final mask = _flagsFor(modifiers);
+    if (mask == 0) return;
+    _bindings.setFlags(event, _bindings.getFlags(event) | mask);
+  }
+
+  static int _flagsFor(KeyModifiers modifiers) {
+    var flags = 0;
+    if (modifiers.command) flags |= flagCommand;
+    if (modifiers.option) flags |= flagOption;
+    if (modifiers.shift) flags |= flagShift;
+    if (modifiers.control) flags |= flagControl;
+    return flags;
+  }
+
   void _scroll(int dx, int dy) {
     _post(
       _bindings.scrollEventCreate(
@@ -431,6 +543,10 @@ class _Bindings {
     required this.mouseEventCreate,
     required this.scrollEventCreate,
     required this.eventPost,
+    required this.keyEventCreate,
+    required this.setUnicode,
+    required this.setFlags,
+    required this.getFlags,
     required this.setField,
     required this.release,
     required this.desktopBounds,
@@ -450,6 +566,10 @@ class _Bindings {
   final _MouseEventCreate mouseEventCreate;
   final _ScrollEventCreate scrollEventCreate;
   final _EventPost eventPost;
+  final _KeyEventCreate keyEventCreate;
+  final _SetUnicode setUnicode;
+  final _SetFlags setFlags;
+  final _GetFlags getFlags;
   final _SetField setField;
   final _Release release;
   final _Bounds Function() desktopBounds;
@@ -553,6 +673,19 @@ class _Bindings {
           ),
       eventPost: services.lookupFunction<_EventPostNative, _EventPost>(
         'CGEventPost',
+      ),
+      keyEventCreate: services
+          .lookupFunction<_KeyEventCreateNative, _KeyEventCreate>(
+            'CGEventCreateKeyboardEvent',
+          ),
+      setUnicode: services.lookupFunction<_SetUnicodeNative, _SetUnicode>(
+        'CGEventKeyboardSetUnicodeString',
+      ),
+      setFlags: services.lookupFunction<_SetFlagsNative, _SetFlags>(
+        'CGEventSetFlags',
+      ),
+      getFlags: services.lookupFunction<_GetFlagsNative, _GetFlags>(
+        'CGEventGetFlags',
       ),
       setField: services.lookupFunction<_SetFieldNative, _SetField>(
         'CGEventSetIntegerValueField',
