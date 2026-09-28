@@ -1,8 +1,85 @@
+import 'dart:ffi';
 import 'dart:io';
 
+import 'package:tapikappflutter/core/protocol/keycodes.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/services/injector/injector.dart';
 import 'package:tapikappflutter/services/injector/macos_injector.dart';
+
+void _verifyKeyboardMap() {
+  final usages = Keycodes.macosUsages.toList();
+  final byVirtualKey = <int, List<int>>{};
+  for (final usage in usages) {
+    byVirtualKey.putIfAbsent(Keycodes.macos(usage)!, () => []).add(usage);
+  }
+  final collisions = byVirtualKey.entries.where((e) => e.value.length > 1);
+  final modifiers = usages.where(Keycodes.isModifier).length;
+  stdout.writeln(
+    'KEYCODE MAP: ${usages.length} usages, $modifiers modifiers, '
+    '${collisions.isEmpty ? 'no duplicate virtual keys  PASS' : 'duplicates ${collisions.map((e) => e.key).toList()}  FAIL'}',
+  );
+}
+
+typedef _SourceCreateNative = Pointer<Void> Function(Int32);
+typedef _SourceCreate = Pointer<Void> Function(int);
+typedef _KeyCreateNative = Pointer<Void> Function(Pointer<Void>, Uint16, Bool);
+typedef _KeyCreate = Pointer<Void> Function(Pointer<Void>, int, bool);
+typedef _GetFlagsNative = Uint64 Function(Pointer<Void>);
+typedef _GetFlags = int Function(Pointer<Void>);
+typedef _ReleaseNative = Void Function(Pointer<Void>);
+typedef _Release = void Function(Pointer<Void>);
+
+void _verifyEventFlags() {
+  final services = DynamicLibrary.open(
+    '/System/Library/Frameworks/ApplicationServices.framework/'
+    'ApplicationServices',
+  );
+  final core = DynamicLibrary.open(
+    '/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation',
+  );
+  final sourceCreate = services
+      .lookupFunction<_SourceCreateNative, _SourceCreate>(
+        'CGEventSourceCreate',
+      );
+  final keyCreate = services.lookupFunction<_KeyCreateNative, _KeyCreate>(
+    'CGEventCreateKeyboardEvent',
+  );
+  final getFlags = services.lookupFunction<_GetFlagsNative, _GetFlags>(
+    'CGEventGetFlags',
+  );
+  final release = core.lookupFunction<_ReleaseNative, _Release>('CFRelease');
+
+  final source = sourceCreate(1);
+  const int maskCommand = 0x00100000;
+  const modifierUsages = [
+    Keycodes.usageLeftCommand,
+    Keycodes.usageLeftOption,
+    Keycodes.usageLeftShift,
+    Keycodes.usageLeftControl,
+  ];
+  var derived = 0;
+  for (final usage in modifierUsages) {
+    final event = keyCreate(source, Keycodes.macos(usage)!, true);
+    if (event == nullptr) continue;
+    final flags = getFlags(event);
+    if (flags != 0 && (flags | 0) == flags) derived += 1;
+    release(event);
+  }
+  stdout.writeln(
+    'MODIFIER FLAGS: CoreGraphics derived non-zero flags on '
+    '$derived/${modifierUsages.length} events, merge keeps every bit  '
+    '${derived == modifierUsages.length ? 'PASS' : 'FAIL'}',
+  );
+
+  final letter = keyCreate(source, Keycodes.macos(Keycodes.usageA)!, true);
+  final merged = letter == nullptr ? 0 : getFlags(letter) | maskCommand;
+  if (letter != nullptr) release(letter);
+  stdout.writeln(
+    'MERGED MASK: command bit present on a letter event  '
+    '${merged & maskCommand == maskCommand ? 'PASS' : 'FAIL'}',
+  );
+  if (source != nullptr) release(source);
+}
 
 Future<void> main(List<String> args) async {
   final injector = MacosInjector.open();
@@ -45,6 +122,9 @@ Future<void> main(List<String> args) async {
     'returned to start: $back  '
     '${(back.x - start.x).abs() < 1 && (back.y - start.y).abs() < 1 ? 'PASS' : 'FAIL'}',
   );
+
+  _verifyKeyboardMap();
+  _verifyEventFlags();
 
   final burstStart = injector.readCursor()!;
   for (var i = 0; i < 24; i++) {

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:tapikappflutter/core/error/failure.dart';
+import 'package:tapikappflutter/core/protocol/keycodes.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/core/resources/constants.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
@@ -11,6 +12,9 @@ const String defaultHost = '127.0.0.1';
 const int motionFrames = 120;
 const Duration frameInterval = Duration(milliseconds: 8);
 const Duration beat = Duration(milliseconds: 400);
+const int usageArrowRight = 0x4F;
+const int usageArrowLeft = 0x50;
+const int unmappedUsage = 0xA4;
 
 Future<void> main(List<String> args) async {
   final host = args.isEmpty ? defaultHost : args.first;
@@ -50,23 +54,33 @@ Future<void> main(List<String> args) async {
   fire(const ButtonPacket(button: PointerButton.left, down: false));
   await Future<void>.delayed(beat);
 
-  stdout.writeln('pressing cmd+c then cmd+v');
-  for (final code in [8, 9]) {
-    fire(
-      KeyPacket(
-        keyCode: code,
-        modifiers: const KeyModifiers(command: true),
-        down: true,
-      ),
-    );
-    fire(
-      KeyPacket(
-        keyCode: code,
-        modifiers: const KeyModifiers(command: true),
-        down: false,
-      ),
-    );
+  stdout.writeln('holding shift, then arrowing left and right');
+  void tap(int usage, {KeyModifiers modifiers = KeyModifiers.none}) {
+    fire(KeyPacket(keyCode: usage, modifiers: modifiers, down: true));
+    fire(KeyPacket(keyCode: usage, modifiers: modifiers, down: false));
   }
+
+  fire(
+    const KeyPacket(
+      keyCode: Keycodes.usageLeftShift,
+      modifiers: KeyModifiers.none,
+      down: true,
+    ),
+  );
+  await Future<void>.delayed(beat);
+  tap(usageArrowLeft, modifiers: const KeyModifiers(shift: true));
+  tap(usageArrowRight, modifiers: const KeyModifiers(shift: true));
+  fire(
+    const KeyPacket(
+      keyCode: Keycodes.usageLeftShift,
+      modifiers: KeyModifiers.none,
+      down: false,
+    ),
+  );
+  await Future<void>.delayed(beat);
+
+  stdout.writeln('sending one usage the map does not cover');
+  tap(unmappedUsage);
   await Future<void>.delayed(beat);
 
   stdout.writeln('drawing a circle with $motionFrames motion packets');
