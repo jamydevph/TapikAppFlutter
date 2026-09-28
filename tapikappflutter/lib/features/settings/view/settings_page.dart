@@ -14,6 +14,7 @@ import '../../../core/widgets/app_slider.dart';
 import '../../../core/widgets/app_switch.dart';
 import '../../../core/widgets/device_card.dart';
 import '../../../core/widgets/settings_group.dart';
+import '../../../services/transport/transport.dart';
 import '../../auth/view_model/auth_cubit.dart';
 import '../../auth/view_model/auth_state.dart';
 import '../view_model/settings_cubit.dart';
@@ -468,7 +469,9 @@ class _AccountGroup extends StatelessWidget {
   Future<void> _signOut(BuildContext context) async {
     final settings = context.read<SettingsCubit>();
     final auth = context.read<AuthCubit>();
+    final transport = context.read<Transport>();
     await settings.flushPending();
+    await transport.disconnect();
     await auth.signOut();
   }
 

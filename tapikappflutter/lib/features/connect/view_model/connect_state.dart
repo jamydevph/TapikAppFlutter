@@ -1,6 +1,13 @@
 import 'package:equatable/equatable.dart';
 
-enum ConnectDeviceStatus { connected, available, untrusted, offline }
+enum ConnectDeviceStatus {
+  connected,
+  connecting,
+  available,
+  untrusted,
+  incompatible,
+  offline,
+}
 
 class ConnectDevice extends Equatable {
   const ConnectDevice({
@@ -18,6 +25,10 @@ class ConnectDevice extends Equatable {
   final ConnectDeviceStatus status;
   final String? address;
   final DateTime? lastSeenAt;
+
+  bool get isConnectable =>
+      status == ConnectDeviceStatus.available ||
+      status == ConnectDeviceStatus.untrusted;
 
   String get platformLabel {
     switch (platform.toLowerCase()) {
@@ -48,13 +59,20 @@ class ConnectLoading extends ConnectState {
 }
 
 class ConnectReady extends ConnectState {
-  const ConnectReady({required this.nearby, required this.offline});
+  const ConnectReady({
+    required this.nearby,
+    required this.offline,
+    this.connectionError,
+    this.registryError,
+  });
 
   final List<ConnectDevice> nearby;
   final List<ConnectDevice> offline;
+  final String? connectionError;
+  final String? registryError;
 
   @override
-  List<Object?> get props => [nearby, offline];
+  List<Object?> get props => [nearby, offline, connectionError, registryError];
 }
 
 class ConnectError extends ConnectState {

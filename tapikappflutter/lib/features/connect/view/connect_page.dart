@@ -2,11 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../../core/di/injection.dart';
 import '../../../core/format/relative_time.dart';
-import '../../../core/router/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/theme/app_typography.dart';
@@ -78,6 +76,12 @@ class _ConnectViewState extends State<_ConnectView> {
           final offline = state is ConnectReady
               ? state.offline
               : const <ConnectDevice>[];
+          final connectionError = state is ConnectReady
+              ? state.connectionError
+              : null;
+          final registryError = state is ConnectReady
+              ? state.registryError
+              : null;
           _syncClock(offline);
           return ListView(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
@@ -101,11 +105,26 @@ class _ConnectViewState extends State<_ConnectView> {
                 )
               else
                 ..._cards(nearby),
-              if (offline.isNotEmpty) ...[
+              if (connectionError != null) ...[
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  connectionError,
+                  style: AppTextStyles.bodyS.copyWith(color: colors.textDanger),
+                ),
+              ],
+              if (offline.isNotEmpty || registryError != null) ...[
                 const SizedBox(height: AppSpacing.xl + AppSpacing.x2s),
                 _SectionLabel(_ConnectView.offlineLabel),
                 const SizedBox(height: AppSpacing.xs + AppSpacing.x3s),
-                ..._cards(offline),
+                if (registryError != null)
+                  Text(
+                    registryError,
+                    style: AppTextStyles.bodyS.copyWith(
+                      color: colors.textDanger,
+                    ),
+                  )
+                else
+                  ..._cards(offline),
               ],
               const SizedBox(height: AppSpacing.x3l + AppSpacing.x2s),
               OutlinedButton(
@@ -229,13 +248,19 @@ class _DeviceTile extends StatelessWidget {
       meta: _meta(device),
       status: switch (device.status) {
         ConnectDeviceStatus.connected => DeviceCardStatus.connected,
+        ConnectDeviceStatus.connecting => DeviceCardStatus.available,
         ConnectDeviceStatus.available => DeviceCardStatus.available,
         ConnectDeviceStatus.untrusted => DeviceCardStatus.untrusted,
+        ConnectDeviceStatus.incompatible => DeviceCardStatus.offline,
         ConnectDeviceStatus.offline => DeviceCardStatus.offline,
       },
-      onTap: device.status == ConnectDeviceStatus.untrusted
-          ? () => context.push(AppRoutes.pairing, extra: device.name)
-          : null,
+      onTap: switch (device.status) {
+        ConnectDeviceStatus.connected =>
+          () => context.read<ConnectCubit>().disconnect(),
+        _ when device.isConnectable =>
+          () => context.read<ConnectCubit>().connect(device),
+        _ => null,
+      },
     );
   }
 
@@ -244,12 +269,16 @@ class _DeviceTile extends StatelessWidget {
     switch (device.status) {
       case ConnectDeviceStatus.connected:
         return device.address == null
-            ? platform
-            : '$platform · ${device.address}';
+            ? '$platform · tap to disconnect'
+            : '$platform · ${device.address} · tap to disconnect';
+      case ConnectDeviceStatus.connecting:
+        return '$platform · connecting…';
       case ConnectDeviceStatus.available:
         return '$platform · trusted · tap to connect';
       case ConnectDeviceStatus.untrusted:
-        return '$platform · pairing code required';
+        return '$platform · new laptop · tap to connect';
+      case ConnectDeviceStatus.incompatible:
+        return '$platform · update Tapikapp on this laptop';
       case ConnectDeviceStatus.offline:
         final seen = device.lastSeenAt;
         return seen == null

@@ -9,6 +9,8 @@ import 'features/agent/view/agent_window.dart';
 import 'features/settings/view_model/theme_cubit.dart';
 import 'firebase_options.dart';
 import 'services/desktop/desktop_shell.dart';
+import 'services/discovery/agent_identity.dart';
+import 'services/discovery/bonsoir_discovery.dart';
 import 'services/injector/macos_injector.dart';
 import 'services/server/agent_server.dart';
 
@@ -18,6 +20,12 @@ Future<void> main() async {
   if (!isController) {
     final server = AgentServer();
     final injector = MacosInjector.open();
+    final identity = await AgentIdentity.load();
+    final advertiser = BonsoirAdvertiser(
+      id: identity.id,
+      name: _hostName(),
+      platform: _desktopPlatformLabel(),
+    );
     final input = server.packets.listen(injector.handle);
     final shell = DesktopShell(
       contentSize: AgentWindow.windowSize,
@@ -25,6 +33,7 @@ Future<void> main() async {
         injector.releaseAll();
         await input.cancel();
         injector.dispose();
+        await advertiser.dispose();
         await server.dispose();
       },
     );
@@ -33,6 +42,7 @@ Future<void> main() async {
       AgentApp(
         server: server,
         injector: injector,
+        advertiser: advertiser,
         hostName: _hostName(),
         platformLabel: _desktopPlatformLabel(),
         isMacOS: Platform.isMacOS,
