@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/router/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/theme/app_typography.dart';
@@ -13,7 +12,9 @@ import '../../../core/widgets/dots_loader.dart';
 import '../../../core/widgets/logo_mark.dart';
 
 class SplashPage extends StatefulWidget {
-  const SplashPage({super.key});
+  const SplashPage({super.key, required this.nextRoute});
+
+  final ValueGetter<String> nextRoute;
 
   static const Duration holdDuration = Duration(milliseconds: 1200);
   static const String statusText = 'Checking your session…';
@@ -29,7 +30,8 @@ class _SplashPageState extends State<SplashPage> {
   void initState() {
     super.initState();
     _handoff = Timer(SplashPage.holdDuration, () {
-      if (mounted) context.go(AppRoutes.login);
+      if (!mounted) return;
+      context.go(widget.nextRoute());
     });
   }
 
@@ -65,7 +67,9 @@ class _SplashPageState extends State<SplashPage> {
                     const SizedBox(height: AppSpacing.x2s),
                     Text(
                       AppBrand.tagline,
-                      style: AppTextStyles.bodyM.copyWith(color: colors.textSecondary),
+                      style: AppTextStyles.bodyM.copyWith(
+                        color: colors.textSecondary,
+                      ),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -89,7 +93,9 @@ class _SplashPageState extends State<SplashPage> {
                       const SizedBox(height: AppSpacing.xl),
                       Text(
                         SplashPage.statusText,
-                        style: AppTextStyles.caption.copyWith(color: colors.textTertiary),
+                        style: AppTextStyles.caption.copyWith(
+                          color: colors.textTertiary,
+                        ),
                         textAlign: TextAlign.center,
                       ),
                     ],
@@ -117,7 +123,10 @@ class _SplashLayout extends MultiChildLayoutDelegate {
     final lowest = size.height - status.height - brand.height - AppSpacing.xl;
     positionChild(
       _SplashSlot.brand,
-      Offset((size.width - brand.width) / 2, math.max(0, math.min(centred, lowest))),
+      Offset(
+        (size.width - brand.width) / 2,
+        math.max(0, math.min(centred, lowest)),
+      ),
     );
     positionChild(
       _SplashSlot.status,
