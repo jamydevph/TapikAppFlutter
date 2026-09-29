@@ -13,20 +13,21 @@ import '../../features/presenter/view/presenter_page.dart';
 import '../../features/settings/view/settings_page.dart';
 import '../../features/trackpad/view/trackpad_page.dart';
 import 'app_routes.dart';
+import 'auth_gate.dart';
 
 class AppRouter {
-  AppRouter({GoRouterRedirect? redirect, Listenable? refreshListenable})
+  AppRouter({required AuthGate authGate})
       : router = GoRouter(
           initialLocation: AppRoutes.splash,
-          redirect: redirect,
-          refreshListenable: refreshListenable,
+          redirect: authGate.redirect,
+          refreshListenable: authGate,
           routes: [
             GoRoute(
               path: AppRoutes.splash,
               pageBuilder: (context, state) {
                 return NoTransitionPage(
                   key: state.pageKey,
-                  child: const SplashPage(),
+                  child: SplashPage(nextRoute: () => authGate.initialRoute),
                 );
               },
             ),

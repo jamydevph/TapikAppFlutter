@@ -2,21 +2,18 @@ import 'package:equatable/equatable.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class UserModel extends Equatable {
-  const UserModel({
-    required this.uid,
-    required this.email,
-    this.displayName,
-  });
+  const UserModel({required this.uid, required this.email, this.displayName});
 
   final String uid;
   final String email;
   final String? displayName;
 
   factory UserModel.fromFirebaseUser(User user) {
+    final name = user.displayName;
     return UserModel(
       uid: user.uid,
       email: user.email ?? '',
-      displayName: user.displayName,
+      displayName: name == null || name.isEmpty ? null : name,
     );
   }
 

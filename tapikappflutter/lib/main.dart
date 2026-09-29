@@ -5,7 +5,10 @@ import 'package:flutter/material.dart';
 
 import 'app/agent_app.dart';
 import 'app/controller_app.dart';
+import 'core/router/auth_gate.dart';
 import 'features/agent/view/agent_window.dart';
+import 'data/repositories/auth_repository.dart';
+import 'data/sources/local_prefs_source.dart';
 import 'features/settings/view_model/theme_cubit.dart';
 import 'firebase_options.dart';
 import 'services/desktop/desktop_shell.dart';
@@ -52,9 +55,15 @@ Future<void> main() async {
     return;
   }
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  final prefs = LocalPrefsSource();
   final themeCubit = ThemeCubit();
   await themeCubit.load();
-  runApp(ControllerApp(themeCubit: themeCubit));
+  final authGate = AuthGate(
+    repository: AuthRepository(),
+    prefs: prefs,
+    loggedIn: await prefs.isLoggedIn(),
+  );
+  runApp(ControllerApp(themeCubit: themeCubit, authGate: authGate));
 }
 
 String _hostName() {
