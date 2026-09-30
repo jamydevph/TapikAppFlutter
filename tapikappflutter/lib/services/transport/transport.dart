@@ -6,11 +6,13 @@ enum TransportState { disconnected, connecting, connected }
 class TransportEndpoint {
   const TransportEndpoint({
     required this.host,
+    this.label,
     this.tcpPort = TapikappConstants.tcpPort,
     this.udpPort = TapikappConstants.udpPort,
   });
 
   final String host;
+  final String? label;
   final int tcpPort;
   final int udpPort;
 }

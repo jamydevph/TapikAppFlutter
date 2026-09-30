@@ -63,6 +63,7 @@ class ConnectCubit extends Cubit<ConnectState> {
       await _transport.connect(
         TransportEndpoint(
           host: agent.host,
+          label: agent.name,
           tcpPort: agent.tcpPort,
           udpPort: agent.udpPort,
         ),

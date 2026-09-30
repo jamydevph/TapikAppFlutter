@@ -89,6 +89,7 @@ class AgentCubit extends Cubit<AgentState> {
       refreshPermission();
       _counter ??= Timer.periodic(counterInterval, _tickCounter);
     } else {
+      _injector.releaseAll();
       _counter?.cancel();
       _counter = null;
     }
