@@ -39,7 +39,10 @@ class AppProviders extends StatelessWidget {
   }
 
   static TrackpadCubit trackpadCubit(BuildContext context) {
-    return TrackpadCubit(context.read<SettingsRepository>());
+    return TrackpadCubit(
+      context.read<SettingsRepository>(),
+      context.read<Transport>(),
+    );
   }
 
   static SettingsCubit settingsCubit(BuildContext context) {

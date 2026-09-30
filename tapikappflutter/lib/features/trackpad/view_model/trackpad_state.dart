@@ -17,13 +17,13 @@ class TrackpadState extends Equatable {
 
   TrackpadState copyWith({
     TrackpadConnection? connection,
-    String? deviceName,
+    String? Function()? deviceName,
     double? sensitivity,
     bool? naturalScrolling,
   }) {
     return TrackpadState(
       connection: connection ?? this.connection,
-      deviceName: deviceName ?? this.deviceName,
+      deviceName: deviceName == null ? this.deviceName : deviceName(),
       sensitivity: sensitivity ?? this.sensitivity,
       naturalScrolling: naturalScrolling ?? this.naturalScrolling,
     );
