@@ -1,3 +1,5 @@
+import 'packet.dart';
+
 class Keycodes {
   const Keycodes._();
 
@@ -12,6 +14,11 @@ class Keycodes {
   static const int usageLeftOption = 0xE2;
   static const int usageLeftCommand = 0xE3;
   static const int usageRightGui = 0xE7;
+  static const int usagePeriod = 0x37;
+  static const int usageArrowRight = 0x4F;
+  static const int usageArrowLeft = 0x50;
+  static const int usageArrowDown = 0x51;
+  static const int usageArrowUp = 0x52;
 
   static const Map<int, int> _macosVirtualKeys = <int, int>{
     0x04: 0, // a
@@ -99,6 +106,19 @@ class Keycodes {
   };
 
   static int? macos(int usage) => _macosVirtualKeys[usage];
+
+  static int? letter(String character) {
+    if (character.length != 1) return null;
+    final code = character.toLowerCase().codeUnitAt(0);
+    if (code < 0x61 || code > 0x7A) return null;
+    return usageA + (code - 0x61);
+  }
+
+  static KeyModifiers primaryModifier(String? platform) {
+    return platform != null && platform.toLowerCase() == 'macos'
+        ? const KeyModifiers(command: true)
+        : const KeyModifiers(control: true);
+  }
 
   static bool isModifier(int usage) =>
       usage >= usageLeftControl && usage <= usageRightGui;

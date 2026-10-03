@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/di/injection.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/theme/app_typography.dart';
@@ -15,7 +16,7 @@ class PresenterPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) => PresenterCubit(),
+      create: (context) => AppProviders.presenterCubit(context)..start(),
       child: const _PresenterView(),
     );
   }
@@ -72,13 +73,23 @@ class _PresenterView extends StatelessWidget {
                               constraints: const BoxConstraints(
                                 minHeight: surfaceMinHeight,
                               ),
-                              child: _AdvanceSurface(enabled: connected),
+                              child: _AdvanceSurface(
+                                enabled: connected,
+                                onTap: context.read<PresenterCubit>().next,
+                              ),
                             ),
                           ),
                           const SizedBox(height: AppSpacing.md),
                           Row(
                             children: [
-                              Expanded(child: _PreviousBar(enabled: connected)),
+                              Expanded(
+                                child: _PreviousBar(
+                                  enabled: connected,
+                                  onTap: context
+                                      .read<PresenterCubit>()
+                                      .previous,
+                                ),
+                              ),
                               const SizedBox(width: AppSpacing.sm),
                               KeyCap(
                                 label: 'Black screen',
@@ -127,11 +138,12 @@ class _PresenterView extends StatelessWidget {
 }
 
 class _AdvanceSurface extends StatelessWidget {
-  const _AdvanceSurface({required this.enabled});
+  const _AdvanceSurface({required this.enabled, required this.onTap});
 
   static const double glyphSize = AppSpacing.x5l;
 
   final bool enabled;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -146,7 +158,7 @@ class _AdvanceSurface extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: enabled ? () {} : null,
+          onTap: enabled ? onTap : null,
           child: Center(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -180,9 +192,10 @@ class _AdvanceSurface extends StatelessWidget {
 }
 
 class _PreviousBar extends StatelessWidget {
-  const _PreviousBar({required this.enabled});
+  const _PreviousBar({required this.enabled, required this.onTap});
 
   final bool enabled;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -197,7 +210,7 @@ class _PreviousBar extends StatelessWidget {
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: enabled ? () {} : null,
+          onTap: enabled ? onTap : null,
           child: SizedBox(
             height: _PresenterView.controlHeight,
             child: Row(
