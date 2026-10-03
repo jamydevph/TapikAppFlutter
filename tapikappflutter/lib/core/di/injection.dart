@@ -8,6 +8,8 @@ import '../../data/sources/local_prefs_source.dart';
 import '../../features/auth/view_model/auth_cubit.dart';
 import '../../features/auth/view_model/password_reset_cubit.dart';
 import '../../features/connect/view_model/connect_cubit.dart';
+import '../../features/keyboard/view_model/keyboard_cubit.dart';
+import '../../features/presenter/view_model/presenter_cubit.dart';
 import '../../features/settings/view_model/settings_cubit.dart';
 import '../../features/settings/view_model/theme_cubit.dart';
 import '../../features/trackpad/view_model/trackpad_cubit.dart';
@@ -36,6 +38,14 @@ class AppProviders extends StatelessWidget {
       context.read<AgentBrowser>(),
       context.read<Transport>(),
     );
+  }
+
+  static KeyboardCubit keyboardCubit(BuildContext context) {
+    return KeyboardCubit(context.read<Transport>());
+  }
+
+  static PresenterCubit presenterCubit(BuildContext context) {
+    return PresenterCubit(context.read<Transport>());
   }
 
   static TrackpadCubit trackpadCubit(BuildContext context) {

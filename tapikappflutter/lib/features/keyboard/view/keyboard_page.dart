@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../core/di/injection.dart';
+import '../../../core/protocol/keycodes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/theme/app_typography.dart';
@@ -15,7 +17,7 @@ class KeyboardPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) => KeyboardCubit(),
+      create: (context) => AppProviders.keyboardCubit(context)..start(),
       child: const _KeyboardView(),
     );
   }
@@ -54,6 +56,8 @@ class _KeyboardViewState extends State<_KeyboardView> {
       child: BlocBuilder<KeyboardCubit, KeyboardState>(
         builder: (context, state) {
           final cubit = context.read<KeyboardCubit>();
+          final connected = state.connection == KeyboardConnection.connected;
+          final onLetter = connected ? cubit.tapLetter : null;
           return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(
               0,
@@ -91,6 +95,11 @@ class _KeyboardViewState extends State<_KeyboardView> {
                             color: colors.textPrimary,
                           ),
                           textInputAction: TextInputAction.send,
+                          enabled: connected,
+                          onSubmitted: (value) {
+                            cubit.sendText(value);
+                            _text.clear();
+                          },
                           decoration: const InputDecoration(
                             hintText: 'Type here to send text…',
                             contentPadding: EdgeInsets.symmetric(
@@ -111,7 +120,13 @@ class _KeyboardViewState extends State<_KeyboardView> {
                               active: state.isHeld(modifier),
                               onTap: () => cubit.toggleModifier(modifier),
                             ),
-                          const KeyCap(label: 'esc', type: KeyCapType.modifier),
+                          KeyCap(
+                            label: 'esc',
+                            type: KeyCapType.modifier,
+                            onTap: connected
+                                ? () => cubit.tapKey(Keycodes.usageEscape)
+                                : null,
+                          ),
                         ],
                       ),
                       const SizedBox(height: AppSpacing.sm),
@@ -155,17 +170,21 @@ class _KeyboardViewState extends State<_KeyboardView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const _LetterRow(letters: 'QWERTYUIOP'),
+                      _LetterRow(letters: 'QWERTYUIOP', onLetter: onLetter),
                       const SizedBox(height: _KeyboardView.rowGap),
-                      const Padding(
-                        padding: EdgeInsets.symmetric(
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
                           horizontal: _KeyboardView.halfKeyInset,
                         ),
-                        child: _LetterRow(letters: 'ASDFGHJKL'),
+                        child: _LetterRow(
+                          letters: 'ASDFGHJKL',
+                          onLetter: onLetter,
+                        ),
                       ),
                       const SizedBox(height: _KeyboardView.rowGap),
                       _LetterRow(
                         letters: 'ZXCVBNM',
+                        onLetter: onLetter,
                         leading: KeyCap(
                           label: _modifierLabel(KeyModifier.shift),
                           icon: const _ModifierGlyph(KeyModifier.shift),
@@ -173,18 +192,21 @@ class _KeyboardViewState extends State<_KeyboardView> {
                           active: state.isHeld(KeyModifier.shift),
                           onTap: () => cubit.toggleModifier(KeyModifier.shift),
                         ),
-                        trailing: const KeyCap(
+                        trailing: KeyCap(
                           label: 'Delete',
-                          icon: Icon(Icons.backspace_outlined),
+                          icon: const Icon(Icons.backspace_outlined),
                           type: KeyCapType.accent,
+                          onTap: connected
+                              ? () => cubit.tapKey(Keycodes.usageBackspace)
+                              : null,
                         ),
                       ),
                       const SizedBox(height: _KeyboardView.rowGap),
-                      const _KeyRow(
+                      _KeyRow(
                         gap: _KeyboardView.keyGap,
                         children: [
-                          KeyCap(label: '123', type: KeyCapType.modifier),
-                          KeyCap(
+                          const KeyCap(label: '123', type: KeyCapType.modifier),
+                          const KeyCap(
                             label: 'Switch layout',
                             icon: Icon(Icons.language_rounded),
                             type: KeyCapType.modifier,
@@ -194,13 +216,25 @@ class _KeyboardViewState extends State<_KeyboardView> {
                               label: 'space',
                               type: KeyCapType.wide,
                               width: double.infinity,
+                              onTap: connected
+                                  ? () => cubit.tapKey(Keycodes.usageSpace)
+                                  : null,
                             ),
                           ),
-                          KeyCap(label: '.', type: KeyCapType.modifier),
+                          KeyCap(
+                            label: '.',
+                            type: KeyCapType.modifier,
+                            onTap: connected
+                                ? () => cubit.tapKey(Keycodes.usagePeriod)
+                                : null,
+                          ),
                           KeyCap(
                             label: 'Return',
-                            icon: Icon(Icons.keyboard_return_rounded),
+                            icon: const Icon(Icons.keyboard_return_rounded),
                             type: KeyCapType.accent,
+                            onTap: connected
+                                ? () => cubit.tapKey(Keycodes.usageReturn)
+                                : null,
                           ),
                         ],
                       ),
@@ -338,9 +372,15 @@ class _KeyRow extends StatelessWidget {
 }
 
 class _LetterRow extends StatelessWidget {
-  const _LetterRow({required this.letters, this.leading, this.trailing});
+  const _LetterRow({
+    required this.letters,
+    required this.onLetter,
+    this.leading,
+    this.trailing,
+  });
 
   final String letters;
+  final ValueChanged<String>? onLetter;
   final Widget? leading;
   final Widget? trailing;
 
@@ -352,7 +392,11 @@ class _LetterRow extends StatelessWidget {
         ?leading,
         for (final letter in letters.split(''))
           Expanded(
-            child: KeyCap(label: letter, width: double.infinity),
+            child: KeyCap(
+              label: letter,
+              width: double.infinity,
+              onTap: onLetter == null ? null : () => onLetter!(letter),
+            ),
           ),
         ?trailing,
       ],

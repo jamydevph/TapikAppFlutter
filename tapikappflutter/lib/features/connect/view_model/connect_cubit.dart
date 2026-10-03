@@ -64,6 +64,7 @@ class ConnectCubit extends Cubit<ConnectState> {
         TransportEndpoint(
           host: agent.host,
           label: agent.name,
+          platform: agent.platform,
           tcpPort: agent.tcpPort,
           udpPort: agent.udpPort,
         ),

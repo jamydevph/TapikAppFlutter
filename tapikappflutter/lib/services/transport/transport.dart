@@ -7,12 +7,14 @@ class TransportEndpoint {
   const TransportEndpoint({
     required this.host,
     this.label,
+    this.platform,
     this.tcpPort = TapikappConstants.tcpPort,
     this.udpPort = TapikappConstants.udpPort,
   });
 
   final String host;
   final String? label;
+  final String? platform;
   final int tcpPort;
   final int udpPort;
 }

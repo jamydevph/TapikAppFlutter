@@ -15,12 +15,12 @@ class PresenterState extends Equatable {
 
   PresenterState copyWith({
     PresenterConnection? connection,
-    String? deviceName,
+    String? Function()? deviceName,
     bool? screenBlanked,
   }) {
     return PresenterState(
       connection: connection ?? this.connection,
-      deviceName: deviceName ?? this.deviceName,
+      deviceName: deviceName == null ? this.deviceName : deviceName(),
       screenBlanked: screenBlanked ?? this.screenBlanked,
     );
   }

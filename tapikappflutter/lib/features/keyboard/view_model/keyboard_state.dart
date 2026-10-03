@@ -19,12 +19,12 @@ class KeyboardState extends Equatable {
 
   KeyboardState copyWith({
     KeyboardConnection? connection,
-    String? deviceName,
+    String? Function()? deviceName,
     Set<KeyModifier>? heldModifiers,
   }) {
     return KeyboardState(
       connection: connection ?? this.connection,
-      deviceName: deviceName ?? this.deviceName,
+      deviceName: deviceName == null ? this.deviceName : deviceName(),
       heldModifiers: heldModifiers ?? this.heldModifiers,
     );
   }
