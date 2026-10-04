@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/di/injection.dart';
 import '../../../core/format/relative_time.dart';
+import '../../../core/router/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/theme/app_typography.dart';
@@ -14,6 +16,7 @@ import '../../auth/view_model/auth_cubit.dart';
 import '../../auth/view_model/auth_state.dart';
 import '../view_model/connect_cubit.dart';
 import '../view_model/connect_state.dart';
+import '../view_model/pairing_cubit.dart';
 
 class ConnectPage extends StatelessWidget {
   const ConnectPage({super.key});
@@ -41,11 +44,26 @@ class _ConnectView extends StatefulWidget {
 
 class _ConnectViewState extends State<_ConnectView> {
   Timer? _clock;
+  bool _prompting = false;
 
   @override
   void dispose() {
     _clock?.cancel();
     super.dispose();
+  }
+
+  Future<void> _promptForCode(ConnectCubit cubit, String? laptop) async {
+    if (_prompting) return;
+    _prompting = true;
+    final code = await GoRouter.of(context)
+        .push<String>(AppRoutes.pairing, extra: laptop);
+    _prompting = false;
+    if (!mounted) return;
+    if (code == null || code.length < PairingCubit.codeLength) {
+      await cubit.cancelPairing();
+      return;
+    }
+    cubit.submitPairingCode(code);
   }
 
   void _syncClock(List<ConnectDevice> offline) {
@@ -68,81 +86,95 @@ class _ConnectViewState extends State<_ConnectView> {
     final colors = AppColors.of(context);
     return SafeArea(
       bottom: false,
-      child: BlocBuilder<ConnectCubit, ConnectState>(
-        builder: (context, state) {
-          final nearby = state is ConnectReady
-              ? state.nearby
-              : const <ConnectDevice>[];
-          final offline = state is ConnectReady
-              ? state.offline
-              : const <ConnectDevice>[];
-          final connectionError = state is ConnectReady
-              ? state.connectionError
-              : null;
-          final registryError = state is ConnectReady
-              ? state.registryError
-              : null;
-          _syncClock(offline);
-          return ListView(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-            children: [
-              const SizedBox(height: AppSpacing.md + AppSpacing.x3s),
-              const _Header(),
-              const SizedBox(height: AppSpacing.xl),
-              _SectionLabel(_ConnectView.nearbyLabel),
-              const SizedBox(height: AppSpacing.xs + AppSpacing.x3s),
-              if (state is ConnectError)
-                Text(
-                  state.message,
-                  style: AppTextStyles.bodyS.copyWith(color: colors.textDanger),
-                )
-              else if (nearby.isEmpty)
-                Text(
-                  _ConnectView.emptyNearby,
-                  style: AppTextStyles.bodyS.copyWith(
-                    color: colors.textTertiary,
-                  ),
-                )
-              else
-                ..._cards(nearby),
-              if (connectionError != null) ...[
-                const SizedBox(height: AppSpacing.sm),
-                Text(
-                  connectionError,
-                  style: AppTextStyles.bodyS.copyWith(color: colors.textDanger),
-                ),
-              ],
-              if (offline.isNotEmpty || registryError != null) ...[
-                const SizedBox(height: AppSpacing.xl + AppSpacing.x2s),
-                _SectionLabel(_ConnectView.offlineLabel),
+      child: BlocListener<ConnectCubit, ConnectState>(
+        listenWhen: (previous, current) =>
+            current is ConnectReady && current.needsPairingCode,
+        listener: (context, state) {
+          if (state is! ConnectReady) return;
+          unawaited(
+            _promptForCode(context.read<ConnectCubit>(), state.pairingLaptop),
+          );
+        },
+        child: BlocBuilder<ConnectCubit, ConnectState>(
+          builder: (context, state) {
+            final nearby = state is ConnectReady
+                ? state.nearby
+                : const <ConnectDevice>[];
+            final offline = state is ConnectReady
+                ? state.offline
+                : const <ConnectDevice>[];
+            final connectionError = state is ConnectReady
+                ? state.connectionError
+                : null;
+            final registryError = state is ConnectReady
+                ? state.registryError
+                : null;
+            _syncClock(offline);
+            return ListView(
+              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
+              children: [
+                const SizedBox(height: AppSpacing.md + AppSpacing.x3s),
+                const _Header(),
+                const SizedBox(height: AppSpacing.xl),
+                _SectionLabel(_ConnectView.nearbyLabel),
                 const SizedBox(height: AppSpacing.xs + AppSpacing.x3s),
-                if (registryError != null)
+                if (state is ConnectError)
                   Text(
-                    registryError,
+                    state.message,
                     style: AppTextStyles.bodyS.copyWith(
                       color: colors.textDanger,
                     ),
                   )
+                else if (nearby.isEmpty)
+                  Text(
+                    _ConnectView.emptyNearby,
+                    style: AppTextStyles.bodyS.copyWith(
+                      color: colors.textTertiary,
+                    ),
+                  )
                 else
-                  ..._cards(offline),
-              ],
-              const SizedBox(height: AppSpacing.x3l + AppSpacing.x2s),
-              OutlinedButton(
-                onPressed: () => _showHelp(context),
-                child: const Text('Can’t see your laptop?'),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Both devices must be on the same Wi-Fi.',
-                style: AppTextStyles.caption.copyWith(
-                  color: colors.textTertiary,
+                  ..._cards(nearby),
+                if (connectionError != null) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    connectionError,
+                    style: AppTextStyles.bodyS.copyWith(
+                      color: colors.textDanger,
+                    ),
+                  ),
+                ],
+                if (offline.isNotEmpty || registryError != null) ...[
+                  const SizedBox(height: AppSpacing.xl + AppSpacing.x2s),
+                  _SectionLabel(_ConnectView.offlineLabel),
+                  const SizedBox(height: AppSpacing.xs + AppSpacing.x3s),
+                  if (registryError != null)
+                    Text(
+                      registryError,
+                      style: AppTextStyles.bodyS.copyWith(
+                        color: colors.textDanger,
+                      ),
+                    )
+                  else
+                    ..._cards(offline),
+                ],
+                const SizedBox(height: AppSpacing.x3l + AppSpacing.x2s),
+                OutlinedButton(
+                  onPressed: () => _showHelp(context),
+                  child: const Text('Can’t see your laptop?'),
                 ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppSpacing.xl),
-            ],
-          );
-        },
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  'Both devices must be on the same Wi-Fi.',
+                  style: AppTextStyles.caption.copyWith(
+                    color: colors.textTertiary,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: AppSpacing.xl),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

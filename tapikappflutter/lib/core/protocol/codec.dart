@@ -20,6 +20,7 @@ class PacketCodec {
   static const int scrollLength = 5;
   static const int keyLength = 5;
   static const int textHeaderLength = 3;
+  static const int pairHeaderLength = 4;
   static const int pingLength = 1;
 
   static Uint8List encode(Packet packet) {
@@ -49,6 +50,15 @@ class PacketCodec {
         bytes[0] = PacketType.text.code;
         view.setUint16(1, payload.length, Endian.big);
         bytes.setRange(textHeaderLength, bytes.length, payload);
+        return bytes;
+      case PairPacket(:final stage, :final detail):
+        final payload = _truncateUtf8(utf8.encode(detail));
+        final bytes = Uint8List(pairHeaderLength + payload.length);
+        final view = ByteData.view(bytes.buffer);
+        bytes[0] = PacketType.pair.code;
+        bytes[1] = stage.value;
+        view.setUint16(2, payload.length, Endian.big);
+        bytes.setRange(pairHeaderLength, bytes.length, payload);
         return bytes;
       case PingPacket():
         return Uint8List.fromList([PacketType.ping.code]);
@@ -110,8 +120,14 @@ class PacketCodec {
       PacketType.key => keyLength,
       PacketType.ping => pingLength,
       PacketType.text => textHeaderLength,
+      PacketType.pair => pairHeaderLength,
     };
     if (available < fixed) return null;
+    if (type == PacketType.pair) {
+      final payload = view.getUint16(offset + 2, Endian.big);
+      final frame = pairHeaderLength + payload;
+      return available < frame ? null : frame;
+    }
     if (type != PacketType.text) return fixed;
     final payload = view.getUint16(offset + 1, Endian.big);
     final frame = textHeaderLength + payload;
@@ -151,6 +167,19 @@ class PacketCodec {
         final start = offset + textHeaderLength;
         try {
           return TextPacket(utf8.decode(bytes.sublist(start, start + length)));
+        } on FormatException {
+          return null;
+        }
+      case PacketType.pair:
+        final stage = PairStage.fromValue(bytes[offset + 1]);
+        if (stage == null) return null;
+        final length = view.getUint16(offset + 2, Endian.big);
+        final start = offset + pairHeaderLength;
+        try {
+          return PairPacket(
+            stage,
+            utf8.decode(bytes.sublist(start, start + length)),
+          );
         } on FormatException {
           return null;
         }

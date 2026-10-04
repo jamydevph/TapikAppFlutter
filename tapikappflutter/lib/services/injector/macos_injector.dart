@@ -228,6 +228,8 @@ class MacosInjector implements Injector {
           _key(keyCode, modifiers, down);
         case TextPacket(:final text):
           _text(text);
+        case PairPacket():
+          return;
         case PingPacket():
           return;
       }

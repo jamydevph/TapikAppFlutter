@@ -62,17 +62,28 @@ class ConnectReady extends ConnectState {
   const ConnectReady({
     required this.nearby,
     required this.offline,
+    this.needsPairingCode = false,
+    this.pairingLaptop,
     this.connectionError,
     this.registryError,
   });
 
   final List<ConnectDevice> nearby;
   final List<ConnectDevice> offline;
+  final bool needsPairingCode;
+  final String? pairingLaptop;
   final String? connectionError;
   final String? registryError;
 
   @override
-  List<Object?> get props => [nearby, offline, connectionError, registryError];
+  List<Object?> get props => [
+    nearby,
+    offline,
+    needsPairingCode,
+    pairingLaptop,
+    connectionError,
+    registryError,
+  ];
 }
 
 class ConnectError extends ConnectState {

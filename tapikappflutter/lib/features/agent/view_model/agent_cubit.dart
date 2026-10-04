@@ -80,6 +80,7 @@ class AgentCubit extends Cubit<AgentState> {
     emit(
       state.copyWith(
         listening: server.listening,
+        pairingCode: () => server.pairingCode,
         connectedPhone: () => server.client,
         packetCount: server.hasClient ? _server.packetCount : 0,
         error: () => null,

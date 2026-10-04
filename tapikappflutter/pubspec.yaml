@@ -46,6 +46,8 @@ dependencies:
   firebase_core: ^4.14.0
   firebase_auth: ^6.6.1
   cloud_firestore: ^6.9.0
+  basic_utils: ^5.8.2
+  pointycastle: ^4.0.0
 
 dev_dependencies:
 

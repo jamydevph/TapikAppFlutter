@@ -3,14 +3,30 @@ import 'dart:io';
 import 'package:tapikappflutter/core/error/failure.dart';
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
+import 'package:tapikappflutter/services/security/agent_certificate.dart';
+import 'package:tapikappflutter/services/security/pairing_guard.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
 
+late final AgentCertificate _certificate;
+
+const String _scratchPhone = 'scratch-phone';
+
+PairingGuard _guard() => PairingGuard(trustedClients: const {_scratchPhone});
+
 Future<void> main() async {
+  stdout.writeln('generating a self-signed certificate (one RSA keypair)…');
+  _certificate = await AgentCertificate.generate('tapikapp-scratch');
+  stdout.writeln('fingerprint ${_certificate.fingerprint.substring(0, 16)}…');
   final checks = <_Check>[];
   final ports = await _freePorts();
-  final server = AgentServer(tcpPort: ports.$1, udpPort: ports.$2);
+  final server = AgentServer(
+    certificate: _certificate,
+    guard: _guard(),
+    tcpPort: ports.$1,
+    udpPort: ports.$2,
+  );
   final seen = <Packet>[];
   final states = <AgentServerState>[];
   final packets = server.packets.listen(seen.add);
@@ -29,6 +45,7 @@ Future<void> main() async {
   final phone = NetworkTransport();
   await phone.connect(
     TransportEndpoint(
+      clientId: _scratchPhone,
       host: InternetAddress.loopbackIPv4.address,
       tcpPort: ports.$1,
       udpPort: ports.$2,
@@ -106,6 +123,7 @@ Future<void> main() async {
   final second = NetworkTransport();
   await second.connect(
     TransportEndpoint(
+      clientId: _scratchPhone,
       host: InternetAddress.loopbackIPv4.address,
       tcpPort: ports.$1,
       udpPort: ports.$2,
@@ -173,7 +191,12 @@ Future<_Check> _udpClashReleasesTcp() async {
     ports.$2,
     reuseAddress: false,
   );
-  final blocked = AgentServer(tcpPort: ports.$1, udpPort: ports.$2);
+  final blocked = AgentServer(
+    certificate: _certificate,
+    guard: _guard(),
+    tcpPort: ports.$1,
+    udpPort: ports.$2,
+  );
   Object? thrown;
   try {
     await blocked.start();
@@ -195,13 +218,19 @@ Future<_Check> _udpClashReleasesTcp() async {
 
 Future<_Check> _counterResetsPerClient() async {
   final ports = await _freePorts();
-  final server = AgentServer(tcpPort: ports.$1, udpPort: ports.$2);
+  final server = AgentServer(
+    certificate: _certificate,
+    guard: _guard(),
+    tcpPort: ports.$1,
+    udpPort: ports.$2,
+  );
   await server.start();
   final counts = <int>[];
   for (var round = 0; round < 2; round++) {
     final phone = NetworkTransport();
     await phone.connect(
       TransportEndpoint(
+        clientId: _scratchPhone,
         host: InternetAddress.loopbackIPv4.address,
         tcpPort: ports.$1,
         udpPort: ports.$2,
@@ -226,7 +255,12 @@ Future<_Check> _counterResetsPerClient() async {
 }
 
 Future<_Check> _portInUse(int tcpPort, int udpPort) async {
-  final rival = AgentServer(tcpPort: tcpPort, udpPort: udpPort);
+  final rival = AgentServer(
+    certificate: _certificate,
+    guard: _guard(),
+    tcpPort: tcpPort,
+    udpPort: udpPort,
+  );
   Object? thrown;
   try {
     await rival.start();

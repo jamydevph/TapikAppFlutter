@@ -6,7 +6,8 @@ enum PacketType {
   scroll(0x03),
   key(0x04),
   text(0x05),
-  ping(0x06);
+  ping(0x06),
+  pair(0x07);
 
   const PacketType(this.code);
 
@@ -160,6 +161,38 @@ class TextPacket extends Packet {
 
   @override
   List<Object?> get props => [type, text];
+}
+
+enum PairStage {
+  hello(1),
+  code(2),
+  accepted(3),
+  rejected(4),
+  codeRequired(5);
+
+  const PairStage(this.value);
+
+  final int value;
+
+  static PairStage? fromValue(int value) {
+    for (final stage in PairStage.values) {
+      if (stage.value == value) return stage;
+    }
+    return null;
+  }
+}
+
+class PairPacket extends Packet {
+  const PairPacket(this.stage, [this.detail = '']);
+
+  final PairStage stage;
+  final String detail;
+
+  @override
+  PacketType get type => PacketType.pair;
+
+  @override
+  List<Object?> get props => [type, stage, detail];
 }
 
 class PingPacket extends Packet {
