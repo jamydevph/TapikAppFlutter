@@ -36,6 +36,7 @@ class TrackpadCubit extends Cubit<TrackpadState> {
         connection: switch (transport) {
           TransportState.connected => TrackpadConnection.connected,
           TransportState.connecting => TrackpadConnection.connecting,
+          TransportState.pairing => TrackpadConnection.connecting,
           TransportState.disconnected => TrackpadConnection.disconnected,
         },
         deviceName: () => endpoint?.label ?? endpoint?.host,

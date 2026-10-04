@@ -72,6 +72,7 @@ class KeyboardCubit extends Cubit<KeyboardState> {
         connection: switch (transport) {
           TransportState.connected => KeyboardConnection.connected,
           TransportState.connecting => KeyboardConnection.connecting,
+          TransportState.pairing => KeyboardConnection.connecting,
           TransportState.disconnected => KeyboardConnection.disconnected,
         },
         deviceName: () => endpoint?.label ?? endpoint?.host,

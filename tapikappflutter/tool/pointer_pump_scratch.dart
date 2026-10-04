@@ -1,8 +1,11 @@
 import 'dart:io';
 
+import 'package:tapikappflutter/core/error/failure.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/services/input/pointer_pump.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
+
+const String _toolClient = 'tapikapp-dev-tool';
 
 class _Recorder implements Transport {
   final List<Packet> sent = <Packet>[];
@@ -11,7 +14,8 @@ class _Recorder implements Transport {
   TransportState get state => TransportState.connected;
 
   @override
-  TransportEndpoint? get endpoint => const TransportEndpoint(host: '127.0.0.1');
+  TransportEndpoint? get endpoint =>
+      const TransportEndpoint(clientId: _toolClient, host: '127.0.0.1');
 
   @override
   Stream<TransportState> get states => const Stream<TransportState>.empty();
@@ -21,6 +25,15 @@ class _Recorder implements Transport {
 
   @override
   Future<void> connect(TransportEndpoint endpoint) async {}
+
+  @override
+  void submitPairingCode(String code) {}
+
+  @override
+  Stream<Failure> get pairingErrors => const Stream<Failure>.empty();
+
+  @override
+  Stream<void> get codeRequests => const Stream<void>.empty();
 
   @override
   void send(Packet packet) => sent.add(packet);

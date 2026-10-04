@@ -6,6 +6,7 @@ import '../../core/error/failure.dart';
 import '../../core/protocol/codec.dart';
 import '../../core/protocol/packet.dart';
 import '../../core/protocol/packet_buffer.dart';
+import '../security/agent_certificate.dart';
 import 'transport.dart';
 
 class NetworkTransport implements Transport {
@@ -24,6 +25,10 @@ class NetworkTransport implements Transport {
   final StreamController<Packet> _incoming =
       StreamController<Packet>.broadcast();
   final PacketBuffer _buffer = PacketBuffer();
+  final StreamController<Failure> _pairingErrors =
+      StreamController<Failure>.broadcast();
+  final StreamController<void> _codeRequests =
+      StreamController<void>.broadcast();
 
   TransportState _state = TransportState.disconnected;
   TransportEndpoint? _endpoint;
@@ -61,11 +66,25 @@ class NetworkTransport implements Transport {
     Socket? socket;
     RawDatagramSocket? datagrams;
     try {
-      socket = await Socket.connect(
-        endpoint.host,
-        endpoint.tcpPort,
-        timeout: connectTimeout,
-      );
+      final expected = endpoint.fingerprint;
+      var presented = '';
+      try {
+        socket = await SecureSocket.connect(
+          endpoint.host,
+          endpoint.tcpPort,
+          timeout: connectTimeout,
+          onBadCertificate: (certificate) {
+            presented = AgentCertificate.fingerprintOfDer(certificate.der);
+            return expected == null || expected == presented;
+          },
+        );
+      } on HandshakeException {
+        throw _handshakeFailure(expected, presented);
+      }
+      if (expected != null && expected != presented) {
+        socket.destroy();
+        throw _handshakeFailure(expected, presented);
+      }
       if (_isStale(generation)) {
         socket.destroy();
         return;
@@ -97,7 +116,8 @@ class NetworkTransport implements Transport {
         _onDatagramEvent,
         onError: (Object _) => _dropConnection(generation),
       );
-      _emit(TransportState.connected);
+      _emit(TransportState.pairing);
+      _sendDirect(PairPacket(PairStage.hello, endpoint.clientId));
     } catch (error) {
       socket?.destroy();
       datagrams?.close();
@@ -106,6 +126,42 @@ class NetworkTransport implements Transport {
         _emit(TransportState.disconnected);
       }
       throw _failureFor(error);
+    }
+  }
+
+  @override
+  void submitPairingCode(String code) {
+    if (_state != TransportState.pairing) return;
+    _sendDirect(PairPacket(PairStage.code, code));
+  }
+
+  @override
+  Stream<Failure> get pairingErrors => _pairingErrors.stream;
+
+  @override
+  Stream<void> get codeRequests => _codeRequests.stream;
+
+  void _sendDirect(Packet packet) {
+    final socket = _socket;
+    if (socket == null) return;
+    try {
+      socket.add(PacketCodec.encode(packet));
+    } catch (_) {}
+  }
+
+  void _onPair(PairPacket packet) {
+    switch (packet.stage) {
+      case PairStage.accepted:
+        _emit(TransportState.connected);
+      case PairStage.rejected:
+        if (!_pairingErrors.isClosed) {
+          _pairingErrors.add(HandshakeFailure(packet.detail));
+        }
+      case PairStage.codeRequired:
+        if (!_codeRequests.isClosed) _codeRequests.add(null);
+      case PairStage.hello:
+      case PairStage.code:
+        return;
     }
   }
 
@@ -143,6 +199,8 @@ class NetworkTransport implements Transport {
     _generation++;
     await _teardown();
     _state = TransportState.disconnected;
+    await _pairingErrors.close();
+    await _codeRequests.close();
     await _states.close();
     await _incoming.close();
   }
@@ -151,6 +209,10 @@ class NetworkTransport implements Transport {
 
   void _onBytes(Uint8List chunk) {
     for (final packet in _buffer.add(chunk)) {
+      if (packet is PairPacket) {
+        _onPair(packet);
+        continue;
+      }
       if (!_incoming.isClosed) _incoming.add(packet);
     }
   }
@@ -193,8 +255,23 @@ class NetworkTransport implements Transport {
     if (error is SocketException) {
       return TransportFailure(_messageFor(error));
     }
+    if (error is HandshakeException || error is TlsException) {
+      return _handshakeFailure(null, '');
+    }
     return const TransportFailure(
       'That laptop address is not valid. Pick it from the list again.',
+    );
+  }
+
+  static Failure _handshakeFailure(String? expected, String presented) {
+    if (expected != null && presented.isNotEmpty && expected != presented) {
+      return const HandshakeFailure(
+        'That laptop presented a different certificate than the one you '
+        'paired with. Pair it again if you replaced or reinstalled it.',
+      );
+    }
+    return const HandshakeFailure(
+      'Tapikapp could not set up a private connection to that laptop.',
     );
   }
 

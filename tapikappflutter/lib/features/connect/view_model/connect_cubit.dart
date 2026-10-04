@@ -6,6 +6,7 @@ import '../../../core/error/failure.dart';
 import '../../../data/models/device_model.dart';
 import '../../../data/repositories/device_repository.dart';
 import '../../../services/discovery/discovery.dart';
+import '../../../services/security/controller_identity.dart';
 import '../../../services/transport/transport.dart';
 import 'connect_state.dart';
 
@@ -21,16 +22,22 @@ class ConnectCubit extends Cubit<ConnectState> {
   StreamSubscription<List<DiscoveredAgent>>? _discovery;
   StreamSubscription<Failure>? _discoveryErrors;
   StreamSubscription<TransportState>? _transportStates;
+  StreamSubscription<Failure>? _pairingErrors;
+  StreamSubscription<void>? _codeRequests;
 
   List<DeviceModel> _trusted = const [];
   List<DiscoveredAgent> _agents = const [];
   DiscoveredAgent? _connectedAgent;
+  DiscoveredAgent? _pairingAgent;
+  bool _needsCode = false;
   String? _connectingId;
   String? _connectionError;
   String? _registryError;
 
   Future<void> start() async {
     _transportStates ??= _transport.states.listen(_onTransportState);
+    _pairingErrors ??= _transport.pairingErrors.listen(_onPairingError);
+    _codeRequests ??= _transport.codeRequests.listen(_onCodeRequested);
     _discoveryErrors ??= _browser.errors.listen(_onDiscoveryError);
     await _registry?.cancel();
     try {
@@ -60,8 +67,10 @@ class ConnectCubit extends Cubit<ConnectState> {
     _connectionError = null;
     _publish();
     try {
+      final identity = await ControllerIdentity.load();
       await _transport.connect(
         TransportEndpoint(
+          clientId: identity.id,
           host: agent.host,
           label: agent.name,
           platform: agent.platform,
@@ -69,12 +78,14 @@ class ConnectCubit extends Cubit<ConnectState> {
           udpPort: agent.udpPort,
         ),
       );
-      _connectedAgent = agent;
+      _pairingAgent = agent;
     } on Failure catch (failure) {
       _connectionError = failure.message;
+      _pairingAgent = null;
       _connectedAgent = null;
     } catch (error) {
       _connectionError = 'Could not connect to ${device.name}.';
+      _pairingAgent = null;
       _connectedAgent = null;
     } finally {
       _connectingId = null;
@@ -85,7 +96,23 @@ class ConnectCubit extends Cubit<ConnectState> {
   Future<void> disconnect() async {
     await _transport.disconnect();
     _connectedAgent = null;
+    _pairingAgent = null;
+    _needsCode = false;
     _publish();
+  }
+
+  void submitPairingCode(String code) {
+    if (!_needsCode) return;
+    _needsCode = false;
+    _connectionError = null;
+    _transport.submitPairingCode(code);
+    _publish();
+  }
+
+  Future<void> cancelPairing() async {
+    if (!_needsCode) return;
+    _needsCode = false;
+    await disconnect();
   }
 
   void dismissConnectionError() {
@@ -107,12 +134,30 @@ class ConnectCubit extends Cubit<ConnectState> {
   }
 
   void _onTransportState(TransportState state) {
-    if (state == TransportState.disconnected) {
-      if (_connectedAgent == null) return;
-      _connectedAgent = null;
-    } else {
-      _syncConnected();
+    switch (state) {
+      case TransportState.disconnected:
+        _needsCode = false;
+        _pairingAgent = null;
+        _connectedAgent = null;
+      case TransportState.connected:
+        _needsCode = false;
+        _pairingAgent = null;
+        _syncConnected();
+      case TransportState.connecting:
+      case TransportState.pairing:
+        _syncConnected();
     }
+    _publish();
+  }
+
+  void _onCodeRequested(void _) {
+    _needsCode = true;
+    _publish();
+  }
+
+  void _onPairingError(Failure failure) {
+    _connectionError = failure.message;
+    if (_transport.state == TransportState.pairing) _needsCode = true;
     _publish();
   }
 
@@ -129,7 +174,7 @@ class ConnectCubit extends Cubit<ConnectState> {
   }
 
   void _syncConnected() {
-    if (_transport.state == TransportState.disconnected) {
+    if (_transport.state != TransportState.connected) {
       _connectedAgent = null;
       return;
     }
@@ -156,7 +201,7 @@ class ConnectCubit extends Cubit<ConnectState> {
     if (isClosed) return;
     final trustedIds = {for (final device in _trusted) device.id};
     final visible = <DiscoveredAgent>[..._agents];
-    final connected = _connectedAgent;
+    final connected = _connectedAgent ?? _pairingAgent;
     if (connected != null && !visible.any((a) => a.id == connected.id)) {
       visible.insert(0, connected);
     }
@@ -186,6 +231,8 @@ class ConnectCubit extends Cubit<ConnectState> {
       ConnectReady(
         nearby: nearby,
         offline: offline,
+        needsPairingCode: _needsCode,
+        pairingLaptop: _pairingAgent?.name,
         connectionError: _connectionError,
         registryError: _registryError,
       ),
@@ -194,7 +241,9 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   ConnectDeviceStatus _statusFor(DiscoveredAgent agent, Set<String> trusted) {
     if (agent.id == _connectedAgent?.id) return ConnectDeviceStatus.connected;
-    if (agent.id == _connectingId) return ConnectDeviceStatus.connecting;
+    if (agent.id == _connectingId || agent.id == _pairingAgent?.id) {
+      return ConnectDeviceStatus.connecting;
+    }
     if (!agent.isCompatible) return ConnectDeviceStatus.incompatible;
     return trusted.contains(agent.id)
         ? ConnectDeviceStatus.available
@@ -213,6 +262,8 @@ class ConnectCubit extends Cubit<ConnectState> {
     _discovery?.cancel();
     _discoveryErrors?.cancel();
     _transportStates?.cancel();
+    _pairingErrors?.cancel();
+    _codeRequests?.cancel();
     unawaited(_browser.stop());
     return super.close();
   }

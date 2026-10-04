@@ -50,6 +50,7 @@ class PresenterCubit extends Cubit<PresenterState> {
         connection: switch (transport) {
           TransportState.connected => PresenterConnection.connected,
           TransportState.connecting => PresenterConnection.connecting,
+          TransportState.pairing => PresenterConnection.connecting,
           TransportState.disconnected => PresenterConnection.disconnected,
         },
         deviceName: () => endpoint?.label ?? endpoint?.host,

@@ -8,6 +8,8 @@ import 'package:tapikappflutter/core/resources/constants.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
 
+const String _toolClient = 'tapikapp-dev-tool';
+
 const String defaultHost = '127.0.0.1';
 const int motionFrames = 120;
 const Duration frameInterval = Duration(milliseconds: 8);
@@ -29,7 +31,9 @@ Future<void> main(List<String> args) async {
     '(motion on ${TapikappConstants.udpPort})',
   );
   try {
-    await transport.connect(TransportEndpoint(host: host));
+    await transport.connect(
+      TransportEndpoint(clientId: _toolClient, host: host),
+    );
   } on Failure catch (failure) {
     stdout.writeln('could not connect: ${failure.message}');
     await states.cancel();

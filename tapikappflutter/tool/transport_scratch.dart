@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -6,10 +7,25 @@ import 'package:tapikappflutter/core/error/failure.dart';
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/core/protocol/packet_buffer.dart';
+import 'package:tapikappflutter/services/security/agent_certificate.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
 
+const String _toolClient = 'tapikapp-dev-tool';
+
+late final AgentCertificate _certificate;
+
 Future<void> main() async {
+  await runZonedGuarded(_run, (error, _) {
+    if (error is SocketException) return;
+    stdout.writeln('UNEXPECTED  $error');
+    exitCode = 1;
+  });
+}
+
+Future<void> _run() async {
+  stdout.writeln('generating a loopback certificate…');
+  _certificate = await AgentCertificate.generate('tapikapp-loopback');
   final checks = <_Check>[];
   final agent = await _LoopbackAgent.start();
   final transport = NetworkTransport();
@@ -20,6 +36,7 @@ Future<void> main() async {
 
   await transport.connect(
     TransportEndpoint(
+      clientId: _toolClient,
       host: InternetAddress.loopbackIPv4.address,
       tcpPort: agent.tcpPort,
       udpPort: agent.udpPort,
@@ -28,10 +45,11 @@ Future<void> main() async {
   await _settle();
   checks.add(
     _Check(
-      'connect walks disconnected to connected',
+      'connect walks connecting -> pairing -> connected',
       seenStates.toString() ==
               [
                 TransportState.connecting,
+                TransportState.pairing,
                 TransportState.connected,
               ].toString() &&
           transport.state == TransportState.connected,
@@ -146,6 +164,7 @@ Future<void> main() async {
   }
   stdout.writeln('${checks.length - failed}/${checks.length} checks passed');
   if (failed > 0) exitCode = 1;
+  await _settle(rounds: 3);
 }
 
 Future<int> _openSocketCount() async {
@@ -164,6 +183,7 @@ Future<_Check> _overlappingConnects() async {
   final attempts = [
     transport.connect(
       TransportEndpoint(
+        clientId: _toolClient,
         host: InternetAddress.loopbackIPv4.address,
         tcpPort: first.tcpPort,
         udpPort: first.udpPort,
@@ -171,6 +191,7 @@ Future<_Check> _overlappingConnects() async {
     ),
     transport.connect(
       TransportEndpoint(
+        clientId: _toolClient,
         host: InternetAddress.loopbackIPv4.address,
         tcpPort: second.tcpPort,
         udpPort: second.udpPort,
@@ -202,6 +223,7 @@ Future<_Check> _disconnectDuringConnect() async {
   final transport = NetworkTransport();
   final attempt = transport.connect(
     TransportEndpoint(
+      clientId: _toolClient,
       host: InternetAddress.loopbackIPv4.address,
       tcpPort: agent.tcpPort,
       udpPort: agent.udpPort,
@@ -230,6 +252,7 @@ Future<_Check> _disposeDuringConnect() async {
   final before = await _openSocketCount();
   final attempt = transport.connect(
     TransportEndpoint(
+      clientId: _toolClient,
       host: InternetAddress.loopbackIPv4.address,
       tcpPort: agent.tcpPort,
       udpPort: agent.udpPort,
@@ -255,6 +278,7 @@ Future<_Check> _invalidEndpoint() async {
   try {
     await transport.connect(
       TransportEndpoint(
+        clientId: _toolClient,
         host: InternetAddress.loopbackIPv4.address,
         tcpPort: 99999,
         udpPort: 99999,
@@ -278,9 +302,13 @@ Future<_Check> _invalidEndpoint() async {
 }
 
 Future<_Check> _ipv6Motion() async {
-  ServerSocket? server;
+  SecureServerSocket? server;
   try {
-    server = await ServerSocket.bind(InternetAddress.loopbackIPv6, 0);
+    server = await SecureServerSocket.bind(
+      InternetAddress.loopbackIPv6,
+      0,
+      _LoopbackAgent._context(),
+    );
   } catch (_) {
     return const _Check('motion reaches an IPv6 peer', true, 'no IPv6 here');
   }
@@ -296,19 +324,31 @@ Future<_Check> _ipv6Motion() async {
     final packet = PacketCodec.decodeOne(datagram.data);
     if (packet != null) seen.add(packet);
   });
-  server.listen((socket) => socket.listen((_) {}, onError: (Object _) {}));
+  final handshake = PacketBuffer();
+  server.listen(
+    (socket) => socket.listen((chunk) {
+      for (final packet in handshake.add(chunk)) {
+        if (packet is PairPacket && packet.stage == PairStage.hello) {
+          socket.add(PacketCodec.encode(const PairPacket(PairStage.accepted)));
+        }
+      }
+    }, onError: (Object _) {}),
+  );
   final transport = NetworkTransport();
   await transport.connect(
     TransportEndpoint(
+      clientId: _toolClient,
       host: InternetAddress.loopbackIPv6.address,
       tcpPort: server.port,
       udpPort: datagrams.port,
     ),
   );
+  await _settle();
   transport.send(const MovePacket(dx: 9, dy: -9));
   await _settle();
   final ok = seen.length == 1 && seen.first == const MovePacket(dx: 9, dy: -9);
   await transport.dispose();
+  await _settle(rounds: 2);
   datagrams.close();
   await server.close();
   return _Check(
@@ -326,6 +366,7 @@ Future<_Check> _refusedConnection(NetworkTransport transport) async {
   try {
     await transport.connect(
       TransportEndpoint(
+        clientId: _toolClient,
         host: InternetAddress.loopbackIPv4.address,
         tcpPort: deadPort,
         udpPort: deadPort,
@@ -343,18 +384,28 @@ Future<_Check> _refusedConnection(NetworkTransport transport) async {
 }
 
 Future<_Check> _serverHangUp(int udpPort) async {
-  final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  final server = await SecureServerSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+    _LoopbackAgent._context(),
+  );
   final transport = NetworkTransport();
   final states = <TransportState>[];
   final log = transport.states.listen(states.add);
   server.listen((socket) => socket.destroy());
-  await transport.connect(
-    TransportEndpoint(
-      host: InternetAddress.loopbackIPv4.address,
-      tcpPort: server.port,
-      udpPort: udpPort,
-    ),
-  );
+  Failure? refused;
+  try {
+    await transport.connect(
+      TransportEndpoint(
+        clientId: _toolClient,
+        host: InternetAddress.loopbackIPv4.address,
+        tcpPort: server.port,
+        udpPort: udpPort,
+      ),
+    );
+  } on Failure catch (failure) {
+    refused = failure;
+  }
   await _settle(rounds: 6);
   final ok =
       transport.state == TransportState.disconnected &&
@@ -362,7 +413,11 @@ Future<_Check> _serverHangUp(int udpPort) async {
   await log.cancel();
   await transport.dispose();
   await server.close();
-  return _Check('a dropped socket reports disconnected', ok, '$states');
+  return _Check(
+    'a dropped socket reports disconnected',
+    ok,
+    '$states${refused == null ? '' : ' after ${refused.message}'}',
+  );
 }
 
 _Check _bufferCap() {
@@ -388,7 +443,11 @@ class _LoopbackAgent {
   _LoopbackAgent._(this._server, this._datagrams);
 
   static Future<_LoopbackAgent> start() async {
-    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final server = await SecureServerSocket.bind(
+      InternetAddress.loopbackIPv4,
+      0,
+      _context(),
+    );
     final datagrams = await RawDatagramSocket.bind(
       InternetAddress.loopbackIPv4,
       0,
@@ -399,7 +458,7 @@ class _LoopbackAgent {
     return agent;
   }
 
-  final ServerSocket _server;
+  final SecureServerSocket _server;
   final RawDatagramSocket _datagrams;
   final PacketBuffer _buffer = PacketBuffer();
   final List<Packet> tcpPackets = [];
@@ -419,10 +478,26 @@ class _LoopbackAgent {
     unawaited(socket.done.catchError((Object _) => socket));
     _client = socket;
     socket.listen(
-      (chunk) => tcpPackets.addAll(_buffer.add(chunk)),
+      (chunk) {
+        for (final packet in _buffer.add(chunk)) {
+          if (packet is PairPacket && packet.stage == PairStage.hello) {
+            socket.add(
+              PacketCodec.encode(const PairPacket(PairStage.accepted)),
+            );
+            continue;
+          }
+          tcpPackets.add(packet);
+        }
+      },
       onError: (Object _) {},
       onDone: () => _client = null,
     );
+  }
+
+  static SecurityContext _context() {
+    return SecurityContext(withTrustedRoots: false)
+      ..useCertificateChainBytes(utf8.encode(_certificate.certificatePem))
+      ..usePrivateKeyBytes(utf8.encode(_certificate.privateKeyPem));
   }
 
   void _onDatagram(RawSocketEvent event) {
