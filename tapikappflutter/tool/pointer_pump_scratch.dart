@@ -36,6 +36,9 @@ class _Recorder implements Transport {
   Stream<void> get codeRequests => const Stream<void>.empty();
 
   @override
+  String? get peerFingerprint => null;
+
+  @override
   void send(Packet packet) => sent.add(packet);
 
   @override

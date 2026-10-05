@@ -329,6 +329,9 @@ Future<_Check> _ipv6Motion() async {
     (socket) => socket.listen((chunk) {
       for (final packet in handshake.add(chunk)) {
         if (packet is PairPacket && packet.stage == PairStage.hello) {
+          socket.add(
+            PacketCodec.encode(const PairPacket(PairStage.codeRequired)),
+          );
           socket.add(PacketCodec.encode(const PairPacket(PairStage.accepted)));
         }
       }
@@ -481,6 +484,9 @@ class _LoopbackAgent {
       (chunk) {
         for (final packet in _buffer.add(chunk)) {
           if (packet is PairPacket && packet.stage == PairStage.hello) {
+            socket.add(
+              PacketCodec.encode(const PairPacket(PairStage.codeRequired)),
+            );
             socket.add(
               PacketCodec.encode(const PairPacket(PairStage.accepted)),
             );

@@ -128,8 +128,10 @@ Future<void> main() async {
   );
   await wrong.dispose();
 
-  final unpinned = NetworkTransport();
-  await unpinned.connect(
+  final skipped = NetworkTransport();
+  final skippedErrors = <Failure>[];
+  skipped.pairingErrors.listen(skippedErrors.add);
+  await skipped.connect(
     TransportEndpoint(
       clientId: _phone,
       host: InternetAddress.loopbackIPv4.address,
@@ -137,14 +139,122 @@ Future<void> main() async {
       udpPort: ports.$2,
     ),
   );
+  await Future<void>.delayed(const Duration(milliseconds: 500));
+  _check(
+    'a laptop that never asks for its code is refused on a first pairing',
+    skipped.state,
+    TransportState.disconnected,
+  );
+  _check(
+    'and the phone is told why',
+    skippedErrors.isNotEmpty &&
+        skippedErrors.last.message.contains('without asking'),
+    true,
+  );
+  await skipped.dispose();
+  await agent.dispose();
+
+  stdout.writeln('');
+  stdout.writeln('a first pairing learns the certificate it was shown');
+  final tofuPorts = await _freePorts();
+  final tofuAgent = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: const {}),
+    tcpPort: tofuPorts.$1,
+    udpPort: tofuPorts.$2,
+  );
+  await tofuAgent.start();
+  final unpinned = NetworkTransport();
+  await unpinned.connect(
+    TransportEndpoint(
+      clientId: _phone,
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: tofuPorts.$1,
+      udpPort: tofuPorts.$2,
+    ),
+  );
   await Future<void>.delayed(const Duration(milliseconds: 400));
   _check(
-    'an unpinned first pairing is allowed',
+    'an unpinned phone is asked for the code',
     unpinned.state,
-    TransportState.connected,
+    TransportState.pairing,
+  );
+  unpinned.submitPairingCode(tofuAgent.guard.visibleCode!);
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check('typing it connects', unpinned.state, TransportState.connected);
+  final captured = unpinned.peerFingerprint;
+  _check(
+    'and the phone learns the certificate it just trusted',
+    captured,
+    mine.fingerprint,
   );
   await unpinned.disconnect();
+  _check(
+    'which is forgotten when the link drops',
+    unpinned.peerFingerprint,
+    null,
+  );
   await unpinned.dispose();
+
+  final returning = NetworkTransport();
+  await returning.connect(
+    TransportEndpoint(
+      clientId: _phone,
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: tofuPorts.$1,
+      udpPort: tofuPorts.$2,
+      fingerprint: captured,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'coming back with the learned fingerprint connects',
+    returning.state,
+    TransportState.connected,
+  );
+  await returning.disconnect();
+  await returning.dispose();
+  await tofuAgent.dispose();
+
+  final impostor = AgentCertificate(
+    certificatePem: other.certificatePem,
+    privateKeyPem: other.privateKeyPem,
+  );
+  final swapPorts = await _freePorts();
+  final swapped = AgentServer(
+    certificate: impostor,
+    guard: PairingGuard(trustedClients: const {_phone}),
+    tcpPort: swapPorts.$1,
+    udpPort: swapPorts.$2,
+  );
+  await swapped.start();
+  final suspicious = NetworkTransport();
+  Object? swapRefusal;
+  try {
+    await suspicious.connect(
+      TransportEndpoint(
+        clientId: _phone,
+        host: InternetAddress.loopbackIPv4.address,
+        tcpPort: swapPorts.$1,
+        udpPort: swapPorts.$2,
+        fingerprint: captured,
+      ),
+    );
+  } catch (error) {
+    swapRefusal = error;
+  }
+  _check(
+    'a laptop that swapped certificates is refused',
+    swapRefusal is Failure,
+    true,
+  );
+  _check(
+    'and no keystroke can be sent to it',
+    suspicious.state,
+    TransportState.disconnected,
+  );
+  await suspicious.dispose();
+  await swapped.dispose();
   await agent.dispose();
 
   stdout.writeln('');

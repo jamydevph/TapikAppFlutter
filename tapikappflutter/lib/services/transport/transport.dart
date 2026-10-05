@@ -41,6 +41,8 @@ abstract class Transport {
 
   Stream<void> get codeRequests;
 
+  String? get peerFingerprint;
+
   void send(Packet packet);
 
   Future<void> disconnect();

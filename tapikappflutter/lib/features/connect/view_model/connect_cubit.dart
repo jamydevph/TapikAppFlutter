@@ -7,6 +7,7 @@ import '../../../data/models/device_model.dart';
 import '../../../data/repositories/device_repository.dart';
 import '../../../services/discovery/discovery.dart';
 import '../../../services/security/controller_identity.dart';
+import '../../../services/security/fingerprint_store.dart';
 import '../../../services/transport/transport.dart';
 import 'connect_state.dart';
 
@@ -61,6 +62,13 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   Future<void> connect(ConnectDevice device) async {
     if (_connectingId != null) return;
+    if (_isAmbiguous(device.id)) {
+      _connectionError =
+          'Two laptops on this network are claiming the same name. '
+          'Disconnect one and try again.';
+      _publish();
+      return;
+    }
     final agent = _agentFor(device.id);
     if (agent == null) return;
     _connectingId = device.id;
@@ -68,12 +76,14 @@ class ConnectCubit extends Cubit<ConnectState> {
     _publish();
     try {
       final identity = await ControllerIdentity.load();
+      final pinned = await FingerprintStore.load(agent.id);
       await _transport.connect(
         TransportEndpoint(
           clientId: identity.id,
           host: agent.host,
           label: agent.name,
           platform: agent.platform,
+          fingerprint: pinned,
           tcpPort: agent.tcpPort,
           udpPort: agent.udpPort,
         ),
@@ -124,7 +134,48 @@ class ConnectCubit extends Cubit<ConnectState> {
   void _onRegistry(List<DeviceModel> registry) {
     _trusted = registry;
     _registryError = null;
+    unawaited(_inheritFingerprints(registry));
     _publish();
+  }
+
+  Future<void> _inheritFingerprints(List<DeviceModel> registry) async {
+    for (final device in registry) {
+      if (device.certFingerprint.isEmpty) continue;
+      final local = await FingerprintStore.load(device.id);
+      if (local == null) {
+        await FingerprintStore.remember(device.id, device.certFingerprint);
+      }
+    }
+  }
+
+  Future<void> _trustAgent(DiscoveredAgent agent) async {
+    final fingerprint = _transport.peerFingerprint;
+    if (fingerprint == null || fingerprint.isEmpty) return;
+    await FingerprintStore.remember(agent.id, fingerprint);
+    final known = _registeredFingerprint(agent.id);
+    try {
+      if (known == fingerprint) {
+        await _devices.touchLastSeen(agent.id);
+      } else {
+        await _devices.registerDevice(
+          DeviceModel(
+            id: agent.id,
+            name: agent.name,
+            platform: agent.platform,
+            certFingerprint: fingerprint,
+          ),
+        );
+      }
+    } on Failure {
+      return;
+    }
+  }
+
+  String? _registeredFingerprint(String id) {
+    for (final device in _trusted) {
+      if (device.id == id) return device.certFingerprint;
+    }
+    return null;
   }
 
   void _onAgents(List<DiscoveredAgent> agents) {
@@ -141,8 +192,10 @@ class ConnectCubit extends Cubit<ConnectState> {
         _connectedAgent = null;
       case TransportState.connected:
         _needsCode = false;
+        final paired = _pairingAgent;
         _pairingAgent = null;
         _syncConnected();
+        if (paired != null) unawaited(_trustAgent(paired));
       case TransportState.connecting:
       case TransportState.pairing:
         _syncConnected();
@@ -187,6 +240,14 @@ class ConnectCubit extends Cubit<ConnectState> {
         return;
       }
     }
+  }
+
+  bool _isAmbiguous(String id) {
+    var seen = 0;
+    for (final agent in _agents) {
+      if (agent.id == id) seen += 1;
+    }
+    return seen > 1;
   }
 
   DiscoveredAgent? _agentFor(String id) {
