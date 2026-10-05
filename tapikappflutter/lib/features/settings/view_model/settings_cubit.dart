@@ -8,6 +8,7 @@ import '../../../data/models/device_model.dart';
 import '../../../data/models/settings_model.dart';
 import '../../../data/repositories/device_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
+import '../../../services/security/fingerprint_store.dart';
 import 'settings_state.dart';
 
 class SettingsCubit extends Cubit<SettingsState> {
@@ -80,6 +81,7 @@ class SettingsCubit extends Cubit<SettingsState> {
     emit(state.copyWith(revokingIds: {...state.revokingIds, deviceId}));
     try {
       await _devices.revokeDevice(deviceId);
+      await FingerprintStore.forget(deviceId);
     } on Failure catch (failure) {
       _onError(failure);
     } finally {

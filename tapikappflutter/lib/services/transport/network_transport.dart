@@ -37,6 +37,8 @@ class NetworkTransport implements Transport {
   StreamSubscription<Uint8List>? _reader;
   StreamSubscription<RawSocketEvent>? _datagramReader;
   InternetAddress? _address;
+  String? _peerFingerprint;
+  bool _sawCodeRequest = false;
   int _udpPort = 0;
   int _generation = 0;
   bool _disposed = false;
@@ -105,6 +107,7 @@ class NetworkTransport implements Transport {
       _socket = socket;
       _datagrams = datagrams;
       _address = socket.remoteAddress;
+      _peerFingerprint = presented.isEmpty ? expected : presented;
       _udpPort = endpoint.udpPort;
       _reader = socket.listen(
         _onBytes,
@@ -141,6 +144,9 @@ class NetworkTransport implements Transport {
   @override
   Stream<void> get codeRequests => _codeRequests.stream;
 
+  @override
+  String? get peerFingerprint => _peerFingerprint;
+
   void _sendDirect(Packet packet) {
     final socket = _socket;
     if (socket == null) return;
@@ -152,12 +158,25 @@ class NetworkTransport implements Transport {
   void _onPair(PairPacket packet) {
     switch (packet.stage) {
       case PairStage.accepted:
+        if (_endpoint?.fingerprint == null && !_sawCodeRequest) {
+          if (!_pairingErrors.isClosed) {
+            _pairingErrors.add(
+              const HandshakeFailure(
+                'That laptop let you in without asking for its code. '
+                'It may not be your laptop.',
+              ),
+            );
+          }
+          unawaited(disconnect());
+          return;
+        }
         _emit(TransportState.connected);
       case PairStage.rejected:
         if (!_pairingErrors.isClosed) {
           _pairingErrors.add(HandshakeFailure(packet.detail));
         }
       case PairStage.codeRequired:
+        _sawCodeRequest = true;
         if (!_codeRequests.isClosed) _codeRequests.add(null);
       case PairStage.hello:
       case PairStage.code:
@@ -237,6 +256,8 @@ class NetworkTransport implements Transport {
     _datagrams = null;
     _address = null;
     _endpoint = null;
+    _peerFingerprint = null;
+    _sawCodeRequest = false;
     _buffer.clear();
     await reader?.cancel();
     await datagramReader?.cancel();

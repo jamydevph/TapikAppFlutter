@@ -49,6 +49,7 @@ Future<void> main() async {
       host: InternetAddress.loopbackIPv4.address,
       tcpPort: ports.$1,
       udpPort: ports.$2,
+      fingerprint: _certificate.fingerprint,
     ),
   );
   await _settle();
@@ -127,6 +128,7 @@ Future<void> main() async {
       host: InternetAddress.loopbackIPv4.address,
       tcpPort: ports.$1,
       udpPort: ports.$2,
+      fingerprint: _certificate.fingerprint,
     ),
   );
   await _settle();
@@ -234,6 +236,7 @@ Future<_Check> _counterResetsPerClient() async {
         host: InternetAddress.loopbackIPv4.address,
         tcpPort: ports.$1,
         udpPort: ports.$2,
+        fingerprint: _certificate.fingerprint,
       ),
     );
     await _settle();
