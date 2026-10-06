@@ -62,7 +62,7 @@ Future<void> _run() async {
     ButtonPacket(button: PointerButton.left, down: false),
     KeyPacket(keyCode: 36, modifiers: KeyModifiers(command: true), down: true),
     TextPacket('tapik 👋🏽 ñ'),
-    PingPacket(),
+    ButtonPacket(button: PointerButton.middle, down: true),
   ];
   const motion = <Packet>[
     MovePacket(dx: 12, dy: -4),
@@ -91,7 +91,7 @@ Future<void> _run() async {
   const replies = <Packet>[
     TextPacket('agent says 안녕'),
     ButtonPacket(button: PointerButton.right, down: true),
-    PingPacket(),
+    ButtonPacket(button: PointerButton.middle, down: false),
   ];
   final stream = <int>[
     for (final packet in replies) ...PacketCodec.encode(packet),
@@ -109,20 +109,27 @@ Future<void> _run() async {
     ),
   );
 
-  agent.writeRaw([0xFF, 0x00, PacketType.ping.code]);
+  agent.writeRaw([
+    0xFF,
+    0x00,
+    ...PacketCodec.encode(
+      const ButtonPacket(button: PointerButton.middle, down: true),
+    ),
+  ]);
   await _settle();
   checks.add(
     _Check(
       'incoming stream resyncs past junk',
       received.length == replies.length + 1 &&
-          received.last == const PingPacket(),
+          received.last ==
+              const ButtonPacket(button: PointerButton.middle, down: true),
       'last ${received.last}',
     ),
   );
 
   await transport.disconnect();
   await _settle();
-  transport.send(const PingPacket());
+  transport.send(const ButtonPacket(button: PointerButton.middle, down: true));
   await _settle();
   checks.add(
     _Check(
@@ -203,7 +210,7 @@ Future<_Check> _overlappingConnects() async {
   await first.close();
   await _settle(rounds: 6);
   final survived = transport.state == TransportState.connected;
-  transport.send(const PingPacket());
+  transport.send(const ButtonPacket(button: PointerButton.middle, down: true));
   await _settle();
   final delivered = second.tcpPackets.length;
   await transport.dispose();
@@ -232,7 +239,7 @@ Future<_Check> _disconnectDuringConnect() async {
   await transport.disconnect();
   await attempt;
   await _settle();
-  transport.send(const PingPacket());
+  transport.send(const ButtonPacket(button: PointerButton.middle, down: true));
   await _settle();
   final ok =
       transport.state == TransportState.disconnected &&

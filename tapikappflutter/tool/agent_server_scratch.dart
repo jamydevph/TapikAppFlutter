@@ -66,7 +66,7 @@ Future<void> main() async {
     ButtonPacket(button: PointerButton.left, down: true),
     ButtonPacket(button: PointerButton.left, down: false),
     KeyPacket(keyCode: 8, modifiers: KeyModifiers(command: true), down: true),
-    PingPacket(),
+    ButtonPacket(button: PointerButton.middle, down: true),
   ];
   for (final packet in reliable) {
     phone.send(packet);
@@ -241,7 +241,7 @@ Future<_Check> _counterResetsPerClient() async {
     );
     await _settle();
     for (var i = 0; i <= round; i++) {
-      phone.send(const PingPacket());
+      phone.send(const ButtonPacket(button: PointerButton.middle, down: true));
     }
     await _settle();
     counts.add(server.packetCount);

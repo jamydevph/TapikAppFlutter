@@ -15,6 +15,10 @@ class ConnectCubit extends Cubit<ConnectState> {
   ConnectCubit(this._devices, this._browser, this._transport)
     : super(const ConnectLoading());
 
+  static const Duration reconnectStep = Duration(seconds: 1);
+  static const Duration maxReconnectDelay = Duration(seconds: 30);
+  static const int maxReconnectAttempts = 8;
+
   final DeviceRepository _devices;
   final AgentBrowser _browser;
   final Transport _transport;
@@ -31,6 +35,10 @@ class ConnectCubit extends Cubit<ConnectState> {
   DiscoveredAgent? _connectedAgent;
   DiscoveredAgent? _pairingAgent;
   bool _needsCode = false;
+  String? _reconnectId;
+  int _reconnectAttempt = 0;
+  Timer? _reconnectTimer;
+  bool _userDisconnected = false;
   String? _connectingId;
   String? _connectionError;
   String? _registryError;
@@ -71,8 +79,14 @@ class ConnectCubit extends Cubit<ConnectState> {
     }
     final agent = _agentFor(device.id);
     if (agent == null) return;
-    _connectingId = device.id;
-    _connectionError = null;
+    _cancelReconnect();
+    _userDisconnected = false;
+    await _dial(agent, manual: true);
+  }
+
+  Future<void> _dial(DiscoveredAgent agent, {required bool manual}) async {
+    _connectingId = agent.id;
+    if (manual) _connectionError = null;
     _publish();
     try {
       final identity = await ControllerIdentity.load();
@@ -90,11 +104,11 @@ class ConnectCubit extends Cubit<ConnectState> {
       );
       _pairingAgent = agent;
     } on Failure catch (failure) {
-      _connectionError = failure.message;
+      if (manual) _connectionError = failure.message;
       _pairingAgent = null;
       _connectedAgent = null;
     } catch (error) {
-      _connectionError = 'Could not connect to ${device.name}.';
+      if (manual) _connectionError = 'Could not connect to ${agent.name}.';
       _pairingAgent = null;
       _connectedAgent = null;
     } finally {
@@ -104,11 +118,48 @@ class ConnectCubit extends Cubit<ConnectState> {
   }
 
   Future<void> disconnect() async {
+    _userDisconnected = true;
+    _cancelReconnect();
     await _transport.disconnect();
     _connectedAgent = null;
     _pairingAgent = null;
     _needsCode = false;
     _publish();
+  }
+
+  void _cancelReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _reconnectId = null;
+    _reconnectAttempt = 0;
+  }
+
+  void _scheduleReconnect() {
+    if (isClosed || _reconnectId == null) return;
+    if (_reconnectAttempt >= maxReconnectAttempts) {
+      _cancelReconnect();
+      _connectionError =
+          'That laptop stopped responding. Tap it again when it is back.';
+      _publish();
+      return;
+    }
+    final steps = 1 << _reconnectAttempt;
+    var delay = reconnectStep * steps;
+    if (delay > maxReconnectDelay) delay = maxReconnectDelay;
+    _reconnectAttempt += 1;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(delay, () => unawaited(_attemptReconnect()));
+  }
+
+  Future<void> _attemptReconnect() async {
+    final id = _reconnectId;
+    if (id == null || isClosed || _connectingId != null) return;
+    final agent = _agentFor(id);
+    if (agent == null || _isAmbiguous(id)) {
+      _scheduleReconnect();
+      return;
+    }
+    await _dial(agent, manual: false);
   }
 
   void submitPairingCode(String code) {
@@ -190,10 +241,15 @@ class ConnectCubit extends Cubit<ConnectState> {
         _needsCode = false;
         _pairingAgent = null;
         _connectedAgent = null;
+        if (!_userDisconnected && _reconnectId != null) _scheduleReconnect();
       case TransportState.connected:
         _needsCode = false;
         final paired = _pairingAgent;
         _pairingAgent = null;
+        _reconnectId = paired?.id ?? _reconnectId;
+        _reconnectAttempt = 0;
+        _reconnectTimer?.cancel();
+        _reconnectTimer = null;
         _syncConnected();
         if (paired != null) unawaited(_trustAgent(paired));
       case TransportState.connecting:
@@ -325,6 +381,7 @@ class ConnectCubit extends Cubit<ConnectState> {
     _transportStates?.cancel();
     _pairingErrors?.cancel();
     _codeRequests?.cancel();
+    _reconnectTimer?.cancel();
     unawaited(_browser.stop());
     return super.close();
   }

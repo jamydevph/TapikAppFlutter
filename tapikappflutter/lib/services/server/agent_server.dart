@@ -39,6 +39,7 @@ class AgentServer {
     required this.certificate,
     required this.guard,
     this.rememberClients,
+    this.peerTimeout = defaultPeerTimeout,
     this.tcpPort = TapikappConstants.tcpPort,
     this.udpPort = TapikappConstants.udpPort,
   });
@@ -46,6 +47,7 @@ class AgentServer {
   final AgentCertificate certificate;
   final PairingGuard guard;
   final Future<void> Function(Set<String>)? rememberClients;
+  final Duration peerTimeout;
   final int tcpPort;
   final int udpPort;
 
@@ -58,12 +60,14 @@ class AgentServer {
   AgentServerState _state = AgentServerState.stopped;
   String? _clientLabel;
   static const Duration handshakeTick = Duration(seconds: 1);
+  static const Duration defaultPeerTimeout = Duration(seconds: 8);
   static const Set<PacketType> motionTypes = {
     PacketType.move,
     PacketType.scroll,
   };
 
   Timer? _handshake;
+  DateTime _lastHeard = DateTime.fromMillisecondsSinceEpoch(0);
   SecureServerSocket? _server;
   RawDatagramSocket? _datagrams;
   StreamSubscription<Socket>? _accepts;
@@ -178,10 +182,9 @@ class AgentServer {
     _buffer.clear();
     _packetCount = 0;
     guard.open(_clientLabel!);
+    _lastHeard = DateTime.now();
     _handshake?.cancel();
-    _handshake = Timer.periodic(handshakeTick, (_) {
-      if (guard.hasTimedOut()) unawaited(disconnectClient());
-    });
+    _handshake = Timer.periodic(handshakeTick, (_) => _watchdog());
     _reader = socket.listen(
       _onBytes,
       onError: (Object _) => unawaited(disconnectClient()),
@@ -192,9 +195,32 @@ class AgentServer {
   }
 
   void _onBytes(Uint8List chunk) {
+    _lastHeard = DateTime.now();
     for (final packet in _buffer.add(chunk)) {
+      if (packet is PingPacket) {
+        _pong();
+        continue;
+      }
       _deliver(packet);
     }
+  }
+
+  void _watchdog() {
+    if (!guard.isAccepted) {
+      if (guard.hasTimedOut()) unawaited(disconnectClient());
+      return;
+    }
+    if (DateTime.now().difference(_lastHeard) > peerTimeout) {
+      unawaited(disconnectClient());
+    }
+  }
+
+  void _pong() {
+    final socket = _client;
+    if (socket == null) return;
+    try {
+      socket.add(PacketCodec.encode(const PingPacket()));
+    } catch (_) {}
   }
 
   void _onDatagramEvent(RawSocketEvent event) {
@@ -203,6 +229,7 @@ class AgentServer {
     if (datagram == null) return;
     if (!guard.isAccepted) return;
     if (_labelFor(datagram.address) != _clientLabel) return;
+    _lastHeard = DateTime.now();
     final packet = PacketCodec.decodeOne(datagram.data);
     if (packet == null) return;
     if (!motionTypes.contains(packet.type)) return;

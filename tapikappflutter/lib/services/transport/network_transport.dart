@@ -10,15 +10,23 @@ import '../security/agent_certificate.dart';
 import 'transport.dart';
 
 class NetworkTransport implements Transport {
-  NetworkTransport({this.connectTimeout = defaultConnectTimeout});
+  NetworkTransport({
+    this.connectTimeout = defaultConnectTimeout,
+    this.keepaliveInterval = defaultKeepaliveInterval,
+    this.peerTimeout = defaultPeerTimeout,
+  });
 
   static const Duration defaultConnectTimeout = Duration(seconds: 5);
+  static const Duration defaultKeepaliveInterval = Duration(seconds: 3);
+  static const Duration defaultPeerTimeout = Duration(seconds: 8);
   static const Set<PacketType> motionTypes = {
     PacketType.move,
     PacketType.scroll,
   };
 
   final Duration connectTimeout;
+  final Duration keepaliveInterval;
+  final Duration peerTimeout;
 
   final StreamController<TransportState> _states =
       StreamController<TransportState>.broadcast();
@@ -39,6 +47,8 @@ class NetworkTransport implements Transport {
   InternetAddress? _address;
   String? _peerFingerprint;
   bool _sawCodeRequest = false;
+  Timer? _keepalive;
+  DateTime _lastHeard = DateTime.fromMillisecondsSinceEpoch(0);
   int _udpPort = 0;
   int _generation = 0;
   bool _disposed = false;
@@ -170,6 +180,8 @@ class NetworkTransport implements Transport {
           unawaited(disconnect());
           return;
         }
+        _lastHeard = DateTime.now();
+        _startKeepalive();
         _emit(TransportState.connected);
       case PairStage.rejected:
         if (!_pairingErrors.isClosed) {
@@ -227,13 +239,28 @@ class NetworkTransport implements Transport {
   bool _isStale(int generation) => _disposed || generation != _generation;
 
   void _onBytes(Uint8List chunk) {
+    _lastHeard = DateTime.now();
     for (final packet in _buffer.add(chunk)) {
       if (packet is PairPacket) {
         _onPair(packet);
         continue;
       }
+      if (packet is PingPacket) continue;
       if (!_incoming.isClosed) _incoming.add(packet);
     }
+  }
+
+  void _startKeepalive() {
+    _keepalive?.cancel();
+    final generation = _generation;
+    _keepalive = Timer.periodic(keepaliveInterval, (_) {
+      if (_isStale(generation) || _state != TransportState.connected) return;
+      if (DateTime.now().difference(_lastHeard) > peerTimeout) {
+        _dropConnection(generation);
+        return;
+      }
+      _sendDirect(const PingPacket());
+    });
   }
 
   void _onDatagramEvent(RawSocketEvent event) {
@@ -258,6 +285,8 @@ class NetworkTransport implements Transport {
     _endpoint = null;
     _peerFingerprint = null;
     _sawCodeRequest = false;
+    _keepalive?.cancel();
+    _keepalive = null;
     _buffer.clear();
     await reader?.cancel();
     await datagramReader?.cancel();
