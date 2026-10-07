@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // START: FlutterFire Configuration
@@ -5,6 +8,11 @@ plugins {
     // END: FlutterFire Configuration
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
@@ -32,11 +40,36 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            keyAlias = keystoreProperties["keyAlias"] as String?
+            keyPassword = keystoreProperties["keyPassword"] as String?
+            storeFile = (keystoreProperties["storeFile"] as String?)?.let { file(it) }
+            storePassword = keystoreProperties["storePassword"] as String?
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (keystorePropertiesFile.exists()) {
+                signingConfigs.getByName("release")
+            } else {
+                val bundling = gradle.startParameter.taskNames.any {
+                    it.contains("bundle", ignoreCase = true) &&
+                        it.contains("release", ignoreCase = true)
+                }
+                if (bundling) {
+                    throw GradleException(
+                        "Tapikapp: android/key.properties not found. An App Bundle " +
+                            "for Play must be signed with your upload key, not the debug key."
+                    )
+                }
+                logger.warn(
+                    "Tapikapp: android/key.properties not found — this release APK " +
+                        "is signed with the DEBUG key, fine for testing, not for Play."
+                )
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }
