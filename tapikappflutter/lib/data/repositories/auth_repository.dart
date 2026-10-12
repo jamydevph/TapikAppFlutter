@@ -27,13 +27,19 @@ class AuthRepository {
   }
 
   Future<UserModel> signUp({required String email, required String password}) {
-    return _guard(() async {
-      final user = UserModel.fromFirebaseUser(
+    return _guard(
+      () async => UserModel.fromFirebaseUser(
         await _source.signUp(email: email, password: password),
-      );
-      await _firestore.writeUserProfile(user);
-      return user;
-    });
+      ),
+    );
+  }
+
+  Future<void> ensureProfile(UserModel user) async {
+    try {
+      await _firestore.ensureUserProfile(user);
+    } catch (_) {
+      throw const DataFailure('Your profile could not be saved yet.');
+    }
   }
 
   Future<UserModel> signIn({required String email, required String password}) {

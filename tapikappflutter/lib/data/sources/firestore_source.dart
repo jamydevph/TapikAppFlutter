@@ -8,11 +8,16 @@ class FirestoreSource {
 
   final FirebaseFirestore _firestore;
 
-  Future<void> writeUserProfile(UserModel user) {
-    return _firestore.collection('users').doc(user.uid).set({
-      'email': user.email,
-      'displayName': user.displayName ?? '',
-      'createdAt': FieldValue.serverTimestamp(),
+  Future<void> ensureUserProfile(UserModel user) {
+    final profile = _firestore.collection('users').doc(user.uid);
+    return _firestore.runTransaction((transaction) async {
+      final existing = await transaction.get(profile);
+      if (existing.exists) return;
+      transaction.set(profile, {
+        'email': user.email,
+        'displayName': user.displayName ?? '',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 

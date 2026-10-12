@@ -157,13 +157,21 @@ class FirebaseHarness {
     await cubit.signUp(email: email, password: password);
     final state = cubit.state;
     check(state is Authenticated, 'Expected Authenticated, got $state');
-    uid = (state as Authenticated).user.uid;
-    final profile =
-        await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    final user = (state as Authenticated).user;
+    uid = user.uid;
+    final profileRef = FirebaseFirestore.instance.collection('users').doc(uid);
+    final profile = await profileRef.get();
     check(profile.exists, 'Profile doc users/$uid was not written');
     check(profile.data()?['email'] == email, 'Profile email mismatch');
     check(await prefs.isLoggedIn(), 'login-once flag should be true');
-    return 'uid=$uid · profile doc exists · loggedIn=true';
+    final createdAt = profile.data()?['createdAt'];
+    await authRepository.ensureProfile(user);
+    final again = await profileRef.get();
+    check(
+      again.data()?['createdAt'] == createdAt,
+      'A second ensureProfile rewrote createdAt',
+    );
+    return 'uid=$uid · profile doc exists · loggedIn=true · ensure is idempotent';
   }
 
   Future<String> signOut() async {
