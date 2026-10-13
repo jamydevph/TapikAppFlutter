@@ -183,10 +183,20 @@ class ConnectCubit extends Cubit<ConnectState> {
   }
 
   void _onRegistry(List<DeviceModel> registry) {
+    final revoked = _wasRevoked(registry);
     _trusted = registry;
     _registryError = null;
     unawaited(_inheritFingerprints(registry));
     _publish();
+    if (revoked) unawaited(disconnect());
+  }
+
+  bool _wasRevoked(List<DeviceModel> registry) {
+    final id = _connectedAgent?.id ?? _reconnectId;
+    if (id == null) return false;
+    final wasTrusted = _trusted.any((device) => device.id == id);
+    final stillTrusted = registry.any((device) => device.id == id);
+    return wasTrusted && !stillTrusted;
   }
 
   Future<void> _inheritFingerprints(List<DeviceModel> registry) async {
