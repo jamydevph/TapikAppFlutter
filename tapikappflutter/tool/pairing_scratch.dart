@@ -168,6 +168,89 @@ void main() {
   _check('an accepted session never times out', guard.hasTimedOut(), false);
 
   stdout.writeln('');
+  stdout.writeln('a phone with no pin pairs from scratch');
+  guard = _guard(trusted: {'phone-a'});
+  guard.open();
+  decision = guard.onPacket(const PairPacket(PairStage.introduce, 'phone-a'));
+  _check(
+    'an introduction is never accepted at once',
+    decision.isAccepted,
+    false,
+  );
+  _check(
+    'even a trusted phone is asked for the code',
+    decision.reply?.stage,
+    PairStage.codeRequired,
+  );
+  _check(
+    'its old trust is dropped',
+    guard.trustedClients.contains('phone-a'),
+    false,
+  );
+  _check('and reported so it can be saved', decision.forgotClient, 'phone-a');
+  decision = guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
+  _check('the right code pairs it again', decision.isAccepted, true);
+  _check(
+    'and it is trusted again',
+    guard.trustedClients.contains('phone-a'),
+    true,
+  );
+
+  guard = _guard();
+  guard.open();
+  decision = guard.onPacket(const PairPacket(PairStage.introduce, 'phone-b'));
+  _check(
+    'an unknown phone introducing itself has nothing to forget',
+    decision.forgotClient,
+    null,
+  );
+  _check(
+    'and is asked for the code as usual',
+    decision.reply?.stage,
+    PairStage.codeRequired,
+  );
+
+  stdout.writeln('');
+  stdout.writeln('a paired phone can ask to be forgotten');
+  guard = _guard(trusted: {'phone-a'});
+  guard.open();
+  _check(
+    'nothing is forgotten before a session exists',
+    guard.forgetCurrentClient(),
+    null,
+  );
+  guard.onPacket(const PairPacket(PairStage.hello, 'phone-b'));
+  decision = guard.onPacket(const PairPacket(PairStage.forget));
+  _check(
+    'a forget request during the handshake does nothing',
+    decision.outcome,
+    PairingOutcome.pending,
+  );
+  _check('and forgets nobody', guard.trustedClients.contains('phone-a'), true);
+  _check(
+    'an unaccepted phone cannot forget anyone',
+    guard.forgetCurrentClient(),
+    null,
+  );
+  guard.open();
+  guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  _check(
+    'an accepted phone can be forgotten',
+    guard.forgetCurrentClient(),
+    'phone-a',
+  );
+  _check(
+    'and is no longer trusted',
+    guard.trustedClients.contains('phone-a'),
+    false,
+  );
+  _check(
+    'forgetting twice forgets nothing more',
+    guard.forgetCurrentClient(),
+    null,
+  );
+
+  stdout.writeln('');
   stdout.writeln('handshake packets survive the wire');
   for (final stage in PairStage.values) {
     final packet = PairPacket(stage, stage == PairStage.code ? '123456' : 'x');

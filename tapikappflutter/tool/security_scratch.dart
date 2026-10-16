@@ -1,8 +1,11 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:tapikappflutter/core/error/failure.dart';
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
+import 'package:tapikappflutter/core/protocol/packet_buffer.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
@@ -28,6 +31,37 @@ Future<(int, int)> _freePorts() async {
   await a.close();
   b.close();
   return ports;
+}
+
+Future<SecureServerSocket> _lenientImpostor(
+  AgentCertificate certificate,
+) async {
+  final context = SecurityContext(withTrustedRoots: false)
+    ..useCertificateChainBytes(utf8.encode(certificate.certificatePem))
+    ..usePrivateKeyBytes(utf8.encode(certificate.privateKeyPem));
+  final server = await SecureServerSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+    context,
+  );
+  server.listen((socket) {
+    unawaited(socket.done.catchError((Object _) => socket));
+    final buffer = PacketBuffer();
+    socket.listen(
+      (chunk) {
+        for (final packet in buffer.add(chunk)) {
+          if (packet is PairPacket) {
+            socket.add(
+              PacketCodec.encode(const PairPacket(PairStage.accepted)),
+            );
+          }
+        }
+      },
+      onError: (Object _) => socket.destroy(),
+      onDone: socket.destroy,
+    );
+  }, onError: (Object _) {});
+  return server;
 }
 
 Future<void> main() async {
@@ -128,6 +162,7 @@ Future<void> main() async {
   );
   await wrong.dispose();
 
+  final lenient = await _lenientImpostor(other);
   final skipped = NetworkTransport();
   final skippedErrors = <Failure>[];
   skipped.pairingErrors.listen(skippedErrors.add);
@@ -135,7 +170,7 @@ Future<void> main() async {
     TransportEndpoint(
       clientId: _phone,
       host: InternetAddress.loopbackIPv4.address,
-      tcpPort: ports.$1,
+      tcpPort: lenient.port,
       udpPort: ports.$2,
     ),
   );
@@ -152,6 +187,7 @@ Future<void> main() async {
     true,
   );
   await skipped.dispose();
+  await lenient.close();
   await agent.dispose();
 
   stdout.writeln('');
@@ -256,6 +292,121 @@ Future<void> main() async {
   await suspicious.dispose();
   await swapped.dispose();
   await agent.dispose();
+
+  stdout.writeln('');
+  stdout.writeln('revoking a laptop makes it forget the phone');
+  final revokePorts = await _freePorts();
+  var persisted = <String>{_phone};
+  final revoked = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: const {_phone}),
+    rememberClients: (clients) async => persisted = clients,
+    tcpPort: revokePorts.$1,
+    udpPort: revokePorts.$2,
+  );
+  final revokedDelivered = <Packet>[];
+  revoked.packets.listen(revokedDelivered.add);
+  await revoked.start();
+  final pinned = TransportEndpoint(
+    clientId: _phone,
+    host: InternetAddress.loopbackIPv4.address,
+    tcpPort: revokePorts.$1,
+    udpPort: revokePorts.$2,
+    fingerprint: mine.fingerprint,
+  );
+  final leaving = NetworkTransport();
+  await leaving.connect(pinned);
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'a trusted phone connects without a code',
+    leaving.state,
+    TransportState.connected,
+  );
+  await leaving.forget();
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'asking the laptop to forget it hangs up',
+    leaving.state,
+    TransportState.disconnected,
+  );
+  _check(
+    'the laptop no longer trusts that phone',
+    revoked.guard.trustedClients.contains(_phone),
+    false,
+  );
+  _check('and saves that, so a restart keeps it', persisted.isEmpty, true);
+  _check('the laptop drops the session too', revoked.state.client, null);
+  _check(
+    'the request to forget never reaches the injector',
+    revokedDelivered.length,
+    0,
+  );
+  await leaving.dispose();
+
+  final back = NetworkTransport();
+  await back.connect(pinned);
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'coming back after that needs the code again',
+    back.state,
+    TransportState.pairing,
+  );
+  await back.dispose();
+  await revoked.dispose();
+
+  stdout.writeln('');
+  stdout.writeln(
+    'a phone that lost its pin pairs again instead of being locked out',
+  );
+  final lostPorts = await _freePorts();
+  var saved = <String>{_phone};
+  final stale = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: const {_phone}),
+    rememberClients: (clients) async => saved = clients,
+    tcpPort: lostPorts.$1,
+    udpPort: lostPorts.$2,
+  );
+  await stale.start();
+  final fresh = NetworkTransport();
+  final freshErrors = <Failure>[];
+  fresh.pairingErrors.listen(freshErrors.add);
+  await fresh.connect(
+    TransportEndpoint(
+      clientId: _phone,
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: lostPorts.$1,
+      udpPort: lostPorts.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'a laptop that still trusts the phone asks for its code',
+    fresh.state,
+    TransportState.pairing,
+  );
+  _check('instead of letting it in and getting refused', freshErrors.length, 0);
+  _check(
+    'the laptop drops its old trust first',
+    stale.guard.trustedClients.contains(_phone),
+    false,
+  );
+  _check('and saves that', saved.isEmpty, true);
+  fresh.submitPairingCode(stale.guard.visibleCode!);
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'typing the code pairs it again',
+    fresh.state,
+    TransportState.connected,
+  );
+  _check('and the laptop trusts it again', saved.contains(_phone), true);
+  _check(
+    'and the phone learns the certificate again',
+    fresh.peerFingerprint,
+    mine.fingerprint,
+  );
+  await fresh.dispose();
+  await stale.dispose();
 
   stdout.writeln('');
   stdout.writeln('an unpaired phone cannot send input');

@@ -35,6 +35,9 @@ class ConnectCubit extends Cubit<ConnectState> {
   DiscoveredAgent? _connectedAgent;
   DiscoveredAgent? _pairingAgent;
   bool _needsCode = false;
+  bool _codeRequested = false;
+  int _dials = 0;
+  final Set<String> _revokedIds = <String>{};
   String? _reconnectId;
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
@@ -85,7 +88,9 @@ class ConnectCubit extends Cubit<ConnectState> {
   }
 
   Future<void> _dial(DiscoveredAgent agent, {required bool manual}) async {
+    _dials += 1;
     _connectingId = agent.id;
+    _codeRequested = false;
     if (manual) _connectionError = null;
     _publish();
     try {
@@ -102,7 +107,9 @@ class ConnectCubit extends Cubit<ConnectState> {
           udpPort: agent.udpPort,
         ),
       );
-      _pairingAgent = agent;
+      _pairingAgent = _transport.state == TransportState.disconnected
+          ? null
+          : agent;
     } on Failure catch (failure) {
       if (manual) _connectionError = failure.message;
       _pairingAgent = null;
@@ -117,10 +124,18 @@ class ConnectCubit extends Cubit<ConnectState> {
     }
   }
 
-  Future<void> disconnect() async {
+  Future<void> disconnect() => _hangUp(forget: false);
+
+  Future<void> _hangUp({required bool forget}) async {
     _userDisconnected = true;
     _cancelReconnect();
-    await _transport.disconnect();
+    final dial = _dials;
+    if (forget) {
+      await _transport.forget();
+    } else {
+      await _transport.disconnect();
+    }
+    if (dial != _dials) return;
     _connectedAgent = null;
     _pairingAgent = null;
     _needsCode = false;
@@ -183,35 +198,62 @@ class ConnectCubit extends Cubit<ConnectState> {
   }
 
   void _onRegistry(List<DeviceModel> registry) {
-    final revoked = _wasRevoked(registry);
+    final revoked = _revokedIn(registry);
     _trusted = registry;
+    _revokedIds
+      ..addAll(revoked)
+      ..removeAll({for (final device in registry) device.id});
     _registryError = null;
     unawaited(_inheritFingerprints(registry));
     _publish();
-    if (revoked) unawaited(disconnect());
+    if (revoked.isNotEmpty) unawaited(_forgetRevoked(revoked));
   }
 
-  bool _wasRevoked(List<DeviceModel> registry) {
-    final id = _connectedAgent?.id ?? _reconnectId;
-    if (id == null) return false;
-    final wasTrusted = _trusted.any((device) => device.id == id);
-    final stillTrusted = registry.any((device) => device.id == id);
-    return wasTrusted && !stillTrusted;
+  Set<String> _revokedIn(List<DeviceModel> registry) {
+    final remaining = {for (final device in registry) device.id};
+    return {
+      for (final device in _trusted)
+        if (!remaining.contains(device.id)) device.id,
+    };
+  }
+
+  Future<void> _forgetRevoked(Set<String> revoked) async {
+    final active = {
+      _connectedAgent?.id,
+      _reconnectId,
+      _connectingId,
+      _pairingAgent?.id,
+    };
+    if (active.any(revoked.contains)) {
+      await _hangUp(forget: true);
+    }
+    for (final id in revoked) {
+      await FingerprintStore.forget(id);
+    }
   }
 
   Future<void> _inheritFingerprints(List<DeviceModel> registry) async {
     for (final device in registry) {
       if (device.certFingerprint.isEmpty) continue;
       final local = await FingerprintStore.load(device.id);
-      if (local == null) {
-        await FingerprintStore.remember(device.id, device.certFingerprint);
-      }
+      if (local != null || !_stillTrusts(device)) continue;
+      await FingerprintStore.remember(device.id, device.certFingerprint);
     }
+  }
+
+  bool _stillTrusts(DeviceModel device) {
+    return _trusted.any(
+      (trusted) =>
+          trusted.id == device.id &&
+          trusted.certFingerprint == device.certFingerprint,
+    );
   }
 
   Future<void> _trustAgent(DiscoveredAgent agent) async {
     final fingerprint = _transport.peerFingerprint;
     if (fingerprint == null || fingerprint.isEmpty) return;
+    if (_revokedIds.contains(agent.id) && !_codeRequested) return;
+    _revokedIds.remove(agent.id);
     await FingerprintStore.remember(agent.id, fingerprint);
     final known = _registeredFingerprint(agent.id);
     try {
@@ -271,6 +313,7 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   void _onCodeRequested(void _) {
     _needsCode = true;
+    _codeRequested = true;
     _publish();
   }
 

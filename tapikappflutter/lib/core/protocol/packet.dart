@@ -168,7 +168,9 @@ enum PairStage {
   code(2),
   accepted(3),
   rejected(4),
-  codeRequired(5);
+  codeRequired(5),
+  introduce(6),
+  forget(7);
 
   const PairStage(this.value);
 

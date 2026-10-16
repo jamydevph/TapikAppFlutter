@@ -80,8 +80,10 @@ class SettingsCubit extends Cubit<SettingsState> {
     if (state.isRevoking(deviceId)) return;
     emit(state.copyWith(revokingIds: {...state.revokingIds, deviceId}));
     try {
-      await _devices.revokeDevice(deviceId);
-      await FingerprintStore.forget(deviceId);
+      await Future.wait([
+        FingerprintStore.forget(deviceId),
+        _devices.revokeDevice(deviceId),
+      ]);
     } on Failure catch (failure) {
       _onError(failure);
     } finally {

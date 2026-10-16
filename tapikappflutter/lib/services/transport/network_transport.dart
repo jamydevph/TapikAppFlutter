@@ -19,6 +19,7 @@ class NetworkTransport implements Transport {
   static const Duration defaultConnectTimeout = Duration(seconds: 5);
   static const Duration defaultKeepaliveInterval = Duration(seconds: 3);
   static const Duration defaultPeerTimeout = Duration(seconds: 8);
+  static const Duration forgetFlushTimeout = Duration(seconds: 1);
   static const Set<PacketType> motionTypes = {
     PacketType.move,
     PacketType.scroll,
@@ -130,7 +131,12 @@ class NetworkTransport implements Transport {
         onError: (Object _) => _dropConnection(generation),
       );
       _emit(TransportState.pairing);
-      _sendDirect(PairPacket(PairStage.hello, endpoint.clientId));
+      _sendDirect(
+        PairPacket(
+          expected == null ? PairStage.introduce : PairStage.hello,
+          endpoint.clientId,
+        ),
+      );
     } catch (error) {
       socket?.destroy();
       datagrams?.close();
@@ -192,6 +198,8 @@ class NetworkTransport implements Transport {
         if (!_codeRequests.isClosed) _codeRequests.add(null);
       case PairStage.hello:
       case PairStage.code:
+      case PairStage.introduce:
+      case PairStage.forget:
         return;
     }
   }
@@ -221,6 +229,20 @@ class NetworkTransport implements Transport {
     _generation++;
     await _teardown();
     _emit(TransportState.disconnected);
+  }
+
+  @override
+  Future<void> forget() async {
+    final generation = _generation;
+    final socket = _socket;
+    if (_state == TransportState.connected && socket != null) {
+      try {
+        socket.add(PacketCodec.encode(const PairPacket(PairStage.forget)));
+        await socket.flush().timeout(forgetFlushTimeout);
+      } catch (_) {}
+    }
+    if (_isStale(generation)) return;
+    await disconnect();
   }
 
   @override

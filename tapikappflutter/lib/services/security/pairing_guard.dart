@@ -9,11 +9,15 @@ class PairingDecision {
     required this.outcome,
     this.reply,
     this.rememberClient,
+    this.forgotClient,
   });
 
   final PairingOutcome outcome;
   final PairPacket? reply;
   final String? rememberClient;
+  final String? forgotClient;
+
+  bool get changesTrust => rememberClient != null || forgotClient != null;
 
   bool get isAccepted => outcome == PairingOutcome.accepted;
 
@@ -115,22 +119,26 @@ class PairingGuard {
     }
     switch (packet.stage) {
       case PairStage.hello:
-        return _onHello(packet.detail);
+        return _onHello(packet.detail, introduce: false);
+      case PairStage.introduce:
+        return _onHello(packet.detail, introduce: true);
       case PairStage.code:
         return _onCode(packet.detail);
       case PairStage.accepted:
       case PairStage.rejected:
       case PairStage.codeRequired:
+      case PairStage.forget:
         return const PairingDecision(outcome: PairingOutcome.pending);
     }
   }
 
-  PairingDecision _onHello(String clientId) {
+  PairingDecision _onHello(String clientId, {required bool introduce}) {
     if (clientId.isEmpty) {
       return _reject('That phone did not identify itself.');
     }
     _clientId = clientId;
-    if (_trusted.contains(clientId)) {
+    final forgot = introduce && _trusted.remove(clientId) ? clientId : null;
+    if (!introduce && _trusted.contains(clientId)) {
       _accepted = true;
       return PairingDecision(
         outcome: PairingOutcome.accepted,
@@ -141,6 +149,7 @@ class PairingGuard {
     if (blocked != null) {
       return _reject(
         'Too many wrong codes. Try again in ${blocked.inSeconds + 1} seconds.',
+        forgotClient: forgot,
       );
     }
     _code = _newCode();
@@ -148,7 +157,14 @@ class PairingGuard {
     return PairingDecision(
       outcome: PairingOutcome.pending,
       reply: const PairPacket(PairStage.codeRequired),
+      forgotClient: forgot,
     );
+  }
+
+  String? forgetCurrentClient() {
+    final client = _clientId;
+    if (!_accepted || client == null) return null;
+    return _trusted.remove(client) ? client : null;
   }
 
   PairingDecision _onCode(String entered) {
@@ -238,10 +254,11 @@ class PairingGuard {
     }
   }
 
-  PairingDecision _reject(String reason) {
+  PairingDecision _reject(String reason, {String? forgotClient}) {
     return PairingDecision(
       outcome: PairingOutcome.rejected,
       reply: PairPacket(PairStage.rejected, reason),
+      forgotClient: forgotClient,
     );
   }
 

@@ -241,15 +241,12 @@ class AgentServer {
       final decision = guard.onPacket(packet);
       final reply = decision.reply;
       if (reply != null) _reply(reply);
+      if (decision.changesTrust) _persistTrust();
       if (decision.shouldDrop) {
         unawaited(disconnectClient());
         return;
       }
       if (decision.isAccepted) {
-        final remember = rememberClients;
-        if (decision.rememberClient != null && remember != null) {
-          unawaited(remember(guard.trustedClients));
-        }
         _emit(AgentServerState(listening: true, client: _clientLabel));
       } else {
         _emit(
@@ -258,8 +255,22 @@ class AgentServer {
       }
       return;
     }
+    if (packet is PairPacket) {
+      if (packet.stage == PairStage.forget) _forgetClient();
+      return;
+    }
     _packetCount += 1;
     if (!_packets.isClosed) _packets.add(packet);
+  }
+
+  void _forgetClient() {
+    if (guard.forgetCurrentClient() != null) _persistTrust();
+    unawaited(disconnectClient());
+  }
+
+  void _persistTrust() {
+    final remember = rememberClients;
+    if (remember != null) unawaited(remember(guard.trustedClients));
   }
 
   void _reply(PairPacket packet) {
