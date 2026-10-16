@@ -7,6 +7,7 @@ import 'package:tapikappflutter/core/error/failure.dart';
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/core/protocol/packet_buffer.dart';
+import 'package:tapikappflutter/services/input/pointer_pump.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
@@ -84,8 +85,12 @@ Future<void> _run() async {
     MovePacket(dx: Packet.minDelta, dy: Packet.maxDelta),
     ScrollPacket(dx: 0, dy: -3),
   ];
-  for (final packet in [...reliable, ...motion]) {
+  for (final packet in reliable) {
     transport.send(packet);
+  }
+  for (final packet in motion) {
+    transport.send(packet);
+    await Future<void>.delayed(PointerPump.nominalFrame);
   }
   await _settle();
   checks.add(
@@ -158,9 +163,9 @@ Future<void> _run() async {
 
   checks.add(await _refusedConnection(transport));
   checks.add(await _serverHangUp(agent.udpPort));
-  checks.add(await _overlappingConnects());
+  checks.addAll(await _overlappingConnects());
   checks.add(await _disconnectDuringConnect());
-  checks.add(await _disposeDuringConnect());
+  checks.addAll(await _disposeDuringConnect());
   checks.add(await _invalidEndpoint());
   checks.add(await _ipv6Motion());
   checks.add(_bufferCap());
@@ -178,26 +183,60 @@ Future<void> _run() async {
   );
 
   var failed = 0;
+  var skipped = 0;
   for (final check in checks) {
-    stdout.writeln(
-      '${check.ok ? 'PASS' : 'FAIL'}  ${check.name}  ${check.detail}',
-    );
-    if (!check.ok) failed += 1;
+    final status = check.skipped ? 'SKIP' : (check.ok ? 'PASS' : 'FAIL');
+    stdout.writeln('$status  ${check.name}  ${check.detail}');
+    if (check.skipped) {
+      skipped += 1;
+    } else if (!check.ok) {
+      failed += 1;
+    }
   }
-  stdout.writeln('${checks.length - failed}/${checks.length} checks passed');
+  stdout.writeln(
+    '${checks.length - failed - skipped}/${checks.length} checks passed'
+    '${skipped == 0 ? '' : ', $skipped skipped'}',
+  );
   if (failed > 0) exitCode = 1;
   await _settle(rounds: 3);
 }
 
-Future<int> _openSocketCount() async {
-  final result = await Process.run('lsof', ['-p', '$pid']);
-  return '${result.stdout}'
-      .split('\n')
-      .where((line) => line.contains('TCP') || line.contains('UDP'))
-      .length;
+Future<int?> _openSocketCount() async {
+  final ProcessResult result;
+  try {
+    result = Platform.isWindows
+        ? await Process.run('netstat', ['-ano'])
+        : await Process.run('lsof', ['-p', '$pid']);
+  } on ProcessException {
+    return null;
+  }
+  if (result.exitCode != 0) return null;
+  final lines = '${result.stdout}'.split('\n');
+  if (!Platform.isWindows) {
+    return lines
+        .where((line) => line.contains('TCP') || line.contains('UDP'))
+        .length;
+  }
+  return lines.where((line) {
+    final fields = line.trim().split(RegExp(r'\s+'));
+    return (fields.first == 'TCP' || fields.first == 'UDP') &&
+        fields.last == '$pid';
+  }).length;
 }
 
-Future<_Check> _overlappingConnects() async {
+_Check _leakCheck(String name, int? before, int? after) {
+  if (before == null || after == null) {
+    return _Check(
+      name,
+      false,
+      'no lsof or netstat to count sockets on ${Platform.operatingSystem}',
+      skipped: true,
+    );
+  }
+  return _Check(name, after <= before, 'sockets $before -> $after');
+}
+
+Future<List<_Check>> _overlappingConnects() async {
   final first = await _LoopbackAgent.start();
   final second = await _LoopbackAgent.start();
   final transport = _phone();
@@ -232,12 +271,14 @@ Future<_Check> _overlappingConnects() async {
   await second.close();
   await _settle();
   final after = await _openSocketCount();
-  return _Check(
-    'the loser of two overlapping connects is discarded',
-    survived && delivered == 1 && after <= before,
-    'live after the stale peer hung up: $survived, delivered $delivered, '
-        'sockets $before -> $after',
-  );
+  return [
+    _Check(
+      'the loser of two overlapping connects is discarded',
+      survived && delivered == 1,
+      'live after the stale peer hung up: $survived, delivered $delivered',
+    ),
+    _leakCheck('overlapping connects leak no sockets', before, after),
+  ];
 }
 
 Future<_Check> _disconnectDuringConnect() async {
@@ -268,7 +309,7 @@ Future<_Check> _disconnectDuringConnect() async {
   );
 }
 
-Future<_Check> _disposeDuringConnect() async {
+Future<List<_Check>> _disposeDuringConnect() async {
   final agent = await _LoopbackAgent.start();
   final transport = _phone();
   final before = await _openSocketCount();
@@ -285,11 +326,18 @@ Future<_Check> _disposeDuringConnect() async {
   await _settle(rounds: 6);
   final after = await _openSocketCount();
   await agent.close();
-  return _Check(
-    'dispose during an in-flight connect leaks nothing',
-    transport.state == TransportState.disconnected && after <= before,
-    'state ${transport.state}, sockets $before -> $after',
-  );
+  return [
+    _Check(
+      'dispose during an in-flight connect ends disconnected',
+      transport.state == TransportState.disconnected,
+      'state ${transport.state}',
+    ),
+    _leakCheck(
+      'dispose during an in-flight connect leaks nothing',
+      before,
+      after,
+    ),
+  ];
 }
 
 Future<_Check> _invalidEndpoint() async {
@@ -332,7 +380,12 @@ Future<_Check> _ipv6Motion() async {
       _LoopbackAgent._context(),
     );
   } catch (_) {
-    return const _Check('motion reaches an IPv6 peer', true, 'no IPv6 here');
+    return const _Check(
+      'motion reaches an IPv6 peer',
+      false,
+      'no IPv6 here',
+      skipped: true,
+    );
   }
   final datagrams = await RawDatagramSocket.bind(
     InternetAddress.loopbackIPv6,
@@ -348,11 +401,15 @@ Future<_Check> _ipv6Motion() async {
   });
   final handshake = PacketBuffer();
   server.listen(
-    (socket) => socket.listen((chunk) {
-      for (final packet in handshake.add(chunk)) {
-        if (packet is PairPacket) _answerPairing(socket, packet);
-      }
-    }, onError: (Object _) {}),
+    (socket) => socket.listen(
+      (chunk) {
+        for (final packet in handshake.add(chunk)) {
+          if (packet is PairPacket) _answerPairing(socket, packet);
+        }
+      },
+      onError: (Object _) => socket.destroy(),
+      onDone: socket.destroy,
+    ),
   );
   final transport = _phone();
   await transport.connect(
@@ -507,8 +564,11 @@ class _LoopbackAgent {
           tcpPackets.add(packet);
         }
       },
-      onError: (Object _) {},
-      onDone: () => _client = null,
+      onError: (Object _) => socket.destroy(),
+      onDone: () {
+        socket.destroy();
+        _client = null;
+      },
     );
   }
 
@@ -534,9 +594,10 @@ class _LoopbackAgent {
 }
 
 class _Check {
-  const _Check(this.name, this.ok, this.detail);
+  const _Check(this.name, this.ok, this.detail, {this.skipped = false});
 
   final String name;
   final bool ok;
   final String detail;
+  final bool skipped;
 }
