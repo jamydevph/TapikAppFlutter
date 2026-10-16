@@ -12,8 +12,23 @@ import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
 
 const String _toolClient = 'tapikapp-dev-tool';
+const String _toolCode = '424242';
 
 late final AgentCertificate _certificate;
+
+NetworkTransport _phone() {
+  final transport = NetworkTransport();
+  transport.codeRequests.listen((_) => transport.submitPairingCode(_toolCode));
+  return transport;
+}
+
+void _answerPairing(Socket socket, PairPacket packet) {
+  if (packet.stage == PairStage.hello || packet.stage == PairStage.introduce) {
+    socket.add(PacketCodec.encode(const PairPacket(PairStage.codeRequired)));
+  } else if (packet.stage == PairStage.code && packet.detail == _toolCode) {
+    socket.add(PacketCodec.encode(const PairPacket(PairStage.accepted)));
+  }
+}
 
 Future<void> main() async {
   await runZonedGuarded(_run, (error, _) {
@@ -28,7 +43,7 @@ Future<void> _run() async {
   _certificate = await AgentCertificate.generate('tapikapp-loopback');
   final checks = <_Check>[];
   final agent = await _LoopbackAgent.start();
-  final transport = NetworkTransport();
+  final transport = _phone();
   final seenStates = <TransportState>[];
   final stateLog = transport.states.listen(seenStates.add);
   final received = <Packet>[];
@@ -185,7 +200,7 @@ Future<int> _openSocketCount() async {
 Future<_Check> _overlappingConnects() async {
   final first = await _LoopbackAgent.start();
   final second = await _LoopbackAgent.start();
-  final transport = NetworkTransport();
+  final transport = _phone();
   final before = await _openSocketCount();
   final attempts = [
     transport.connect(
@@ -227,7 +242,7 @@ Future<_Check> _overlappingConnects() async {
 
 Future<_Check> _disconnectDuringConnect() async {
   final agent = await _LoopbackAgent.start();
-  final transport = NetworkTransport();
+  final transport = _phone();
   final attempt = transport.connect(
     TransportEndpoint(
       clientId: _toolClient,
@@ -255,7 +270,7 @@ Future<_Check> _disconnectDuringConnect() async {
 
 Future<_Check> _disposeDuringConnect() async {
   final agent = await _LoopbackAgent.start();
-  final transport = NetworkTransport();
+  final transport = _phone();
   final before = await _openSocketCount();
   final attempt = transport.connect(
     TransportEndpoint(
@@ -278,7 +293,7 @@ Future<_Check> _disposeDuringConnect() async {
 }
 
 Future<_Check> _invalidEndpoint() async {
-  final transport = NetworkTransport();
+  final transport = _phone();
   final states = <TransportState>[];
   final log = transport.states.listen(states.add);
   Object? thrown;
@@ -335,18 +350,11 @@ Future<_Check> _ipv6Motion() async {
   server.listen(
     (socket) => socket.listen((chunk) {
       for (final packet in handshake.add(chunk)) {
-        if (packet is PairPacket &&
-            (packet.stage == PairStage.hello ||
-                packet.stage == PairStage.introduce)) {
-          socket.add(
-            PacketCodec.encode(const PairPacket(PairStage.codeRequired)),
-          );
-          socket.add(PacketCodec.encode(const PairPacket(PairStage.accepted)));
-        }
+        if (packet is PairPacket) _answerPairing(socket, packet);
       }
     }, onError: (Object _) {}),
   );
-  final transport = NetworkTransport();
+  final transport = _phone();
   await transport.connect(
     TransportEndpoint(
       clientId: _toolClient,
@@ -401,7 +409,7 @@ Future<_Check> _serverHangUp(int udpPort) async {
     0,
     _LoopbackAgent._context(),
   );
-  final transport = NetworkTransport();
+  final transport = _phone();
   final states = <TransportState>[];
   final log = transport.states.listen(states.add);
   server.listen((socket) => socket.destroy());
@@ -492,15 +500,8 @@ class _LoopbackAgent {
     socket.listen(
       (chunk) {
         for (final packet in _buffer.add(chunk)) {
-          if (packet is PairPacket &&
-              (packet.stage == PairStage.hello ||
-                  packet.stage == PairStage.introduce)) {
-            socket.add(
-              PacketCodec.encode(const PairPacket(PairStage.codeRequired)),
-            );
-            socket.add(
-              PacketCodec.encode(const PairPacket(PairStage.accepted)),
-            );
+          if (packet is PairPacket) {
+            _answerPairing(socket, packet);
             continue;
           }
           tcpPackets.add(packet);

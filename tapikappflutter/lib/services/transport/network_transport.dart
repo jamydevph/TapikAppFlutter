@@ -47,7 +47,7 @@ class NetworkTransport implements Transport {
   StreamSubscription<RawSocketEvent>? _datagramReader;
   InternetAddress? _address;
   String? _peerFingerprint;
-  bool _sawCodeRequest = false;
+  bool _submittedCode = false;
   Timer? _keepalive;
   DateTime _lastHeard = DateTime.fromMillisecondsSinceEpoch(0);
   int _udpPort = 0;
@@ -151,6 +151,7 @@ class NetworkTransport implements Transport {
   @override
   void submitPairingCode(String code) {
     if (_state != TransportState.pairing) return;
+    _submittedCode = true;
     _sendDirect(PairPacket(PairStage.code, code));
   }
 
@@ -174,7 +175,7 @@ class NetworkTransport implements Transport {
   void _onPair(PairPacket packet) {
     switch (packet.stage) {
       case PairStage.accepted:
-        if (_endpoint?.fingerprint == null && !_sawCodeRequest) {
+        if (_endpoint?.fingerprint == null && !_submittedCode) {
           if (!_pairingErrors.isClosed) {
             _pairingErrors.add(
               const HandshakeFailure(
@@ -194,7 +195,6 @@ class NetworkTransport implements Transport {
           _pairingErrors.add(HandshakeFailure(packet.detail));
         }
       case PairStage.codeRequired:
-        _sawCodeRequest = true;
         if (!_codeRequests.isClosed) _codeRequests.add(null);
       case PairStage.hello:
       case PairStage.code:
@@ -306,7 +306,7 @@ class NetworkTransport implements Transport {
     _address = null;
     _endpoint = null;
     _peerFingerprint = null;
-    _sawCodeRequest = false;
+    _submittedCode = false;
     _keepalive?.cancel();
     _keepalive = null;
     _buffer.clear();
