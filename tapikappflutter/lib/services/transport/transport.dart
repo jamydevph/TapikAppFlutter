@@ -47,5 +47,7 @@ abstract class Transport {
 
   Future<void> disconnect();
 
+  Future<void> forget();
+
   Future<void> dispose();
 }

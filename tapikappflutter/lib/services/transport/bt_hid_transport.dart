@@ -136,6 +136,9 @@ class BtHidTransport implements Transport {
   }
 
   @override
+  Future<void> forget() => disconnect();
+
+  @override
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;

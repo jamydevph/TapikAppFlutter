@@ -45,6 +45,9 @@ class _Recorder implements Transport {
   Future<void> disconnect() async {}
 
   @override
+  Future<void> forget() async {}
+
+  @override
   Future<void> dispose() async {}
 
   int get movedX => sent.whereType<MovePacket>().fold(0, (a, p) => a + p.dx);
