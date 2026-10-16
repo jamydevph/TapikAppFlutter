@@ -143,7 +143,11 @@ Future<void> main() async {
   );
   mute.listen((socket) {
     unawaited(socket.done.catchError((Object _) => socket));
-    socket.listen((_) {}, onError: (Object _) {});
+    socket.listen(
+      (_) {},
+      onError: (Object _) => socket.destroy(),
+      onDone: socket.destroy,
+    );
     try {
       socket.add(PacketCodec.encode(const PairPacket(PairStage.codeRequired)));
       socket.add(PacketCodec.encode(const PairPacket(PairStage.accepted)));
