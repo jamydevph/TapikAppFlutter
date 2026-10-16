@@ -34,8 +34,9 @@ Future<(int, int)> _freePorts() async {
 }
 
 Future<SecureServerSocket> _lenientImpostor(
-  AgentCertificate certificate,
-) async {
+  AgentCertificate certificate, {
+  bool askFirst = false,
+}) async {
   final context = SecurityContext(withTrustedRoots: false)
     ..useCertificateChainBytes(utf8.encode(certificate.certificatePem))
     ..usePrivateKeyBytes(utf8.encode(certificate.privateKeyPem));
@@ -51,6 +52,11 @@ Future<SecureServerSocket> _lenientImpostor(
       (chunk) {
         for (final packet in buffer.add(chunk)) {
           if (packet is PairPacket) {
+            if (askFirst) {
+              socket.add(
+                PacketCodec.encode(const PairPacket(PairStage.codeRequired)),
+              );
+            }
             socket.add(
               PacketCodec.encode(const PairPacket(PairStage.accepted)),
             );
@@ -188,6 +194,41 @@ Future<void> main() async {
   );
   await skipped.dispose();
   await lenient.close();
+
+  final hasty = await _lenientImpostor(other, askFirst: true);
+  final rushed = NetworkTransport();
+  final rushedErrors = <Failure>[];
+  final rushedStates = <TransportState>[];
+  rushed.pairingErrors.listen(rushedErrors.add);
+  rushed.states.listen(rushedStates.add);
+  await rushed.connect(
+    TransportEndpoint(
+      clientId: _phone,
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: hasty.port,
+      udpPort: ports.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 500));
+  _check(
+    'a laptop that asks for its code then lets the phone in before it is '
+    'typed is refused',
+    rushed.state,
+    TransportState.disconnected,
+  );
+  _check(
+    'without ever reporting connected',
+    rushedStates.contains(TransportState.connected),
+    false,
+  );
+  _check(
+    'and the phone is told why',
+    rushedErrors.isNotEmpty &&
+        rushedErrors.last.message.contains('without asking'),
+    true,
+  );
+  await rushed.dispose();
+  await hasty.close();
   await agent.dispose();
 
   stdout.writeln('');
