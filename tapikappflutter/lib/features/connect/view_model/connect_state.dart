@@ -64,6 +64,7 @@ class ConnectReady extends ConnectState {
     required this.offline,
     this.needsPairingCode = false,
     this.pairingLaptop,
+    this.pairingLaptopId,
     this.connectionError,
     this.registryError,
   });
@@ -72,6 +73,7 @@ class ConnectReady extends ConnectState {
   final List<ConnectDevice> offline;
   final bool needsPairingCode;
   final String? pairingLaptop;
+  final String? pairingLaptopId;
   final String? connectionError;
   final String? registryError;
 
@@ -81,6 +83,7 @@ class ConnectReady extends ConnectState {
     offline,
     needsPairingCode,
     pairingLaptop,
+    pairingLaptopId,
     connectionError,
     registryError,
   ];

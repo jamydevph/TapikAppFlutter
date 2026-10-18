@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../core/error/failure.dart';
 import '../../../services/discovery/discovery.dart';
 import '../../../services/injector/injector.dart';
+import '../../../services/security/laptop_id.dart';
 import '../../../services/server/agent_server.dart';
 import 'agent_state.dart';
 
@@ -24,6 +25,7 @@ class AgentCubit extends Cubit<AgentState> {
            hostName: hostName,
            platformLabel: platformLabel,
            isMacOS: isMacOS,
+           laptopId: LaptopId.of(server.certificate.fingerprint),
          ),
        );
 

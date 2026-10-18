@@ -76,7 +76,7 @@ class NetworkTransport implements Transport {
     if (_isStale(generation)) return;
     _endpoint = endpoint;
     _emit(TransportState.connecting);
-    Socket? socket;
+    SecureSocket? socket;
     RawDatagramSocket? datagrams;
     try {
       final expected = endpoint.fingerprint;
@@ -94,6 +94,12 @@ class NetworkTransport implements Transport {
       } on HandshakeException {
         throw _handshakeFailure(expected, presented);
       }
+      final certificate = socket.peerCertificate;
+      if (certificate == null) {
+        socket.destroy();
+        throw _handshakeFailure(expected, '');
+      }
+      presented = AgentCertificate.fingerprintOfDer(certificate.der);
       if (expected != null && expected != presented) {
         socket.destroy();
         throw _handshakeFailure(expected, presented);
@@ -118,7 +124,7 @@ class NetworkTransport implements Transport {
       _socket = socket;
       _datagrams = datagrams;
       _address = socket.remoteAddress;
-      _peerFingerprint = presented.isEmpty ? expected : presented;
+      _peerFingerprint = presented;
       _udpPort = endpoint.udpPort;
       _reader = socket.listen(
         _onBytes,

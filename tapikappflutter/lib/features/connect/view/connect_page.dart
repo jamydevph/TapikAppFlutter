@@ -17,6 +17,7 @@ import '../../auth/view_model/auth_state.dart';
 import '../view_model/connect_cubit.dart';
 import '../view_model/connect_state.dart';
 import '../view_model/pairing_cubit.dart';
+import 'pairing_route.dart';
 
 class ConnectPage extends StatelessWidget {
   const ConnectPage({super.key});
@@ -52,18 +53,30 @@ class _ConnectViewState extends State<_ConnectView> {
     super.dispose();
   }
 
-  Future<void> _promptForCode(ConnectCubit cubit, String? laptop) async {
+  Future<void> _promptForCode(ConnectCubit cubit, ConnectReady state) async {
     if (_prompting) return;
     _prompting = true;
-    final code = await GoRouter.of(context)
-        .push<String>(AppRoutes.pairing, extra: laptop);
+    final router = GoRouter.of(context);
+    final request = PairingRequest(
+      laptop: state.pairingLaptop,
+      laptopId: state.pairingLaptopId,
+    );
+    final outcome = await router.push<PairingResult>(
+      AppRoutes.pairing,
+      extra: request,
+    );
     _prompting = false;
     if (!mounted) return;
-    if (code == null || code.length < PairingCubit.codeLength) {
-      await cubit.cancelPairing();
-      return;
+    switch (outcome) {
+      case PairingCodeEntered(:final code)
+          when code.length == PairingCubit.codeLength:
+        cubit.submitPairingCode(code);
+      case PairingLaptopMismatch():
+        unawaited(router.push<void>(AppRoutes.laptopMismatch, extra: request));
+        await cubit.rejectLaptop(request.laptopId);
+      case _:
+        await cubit.cancelPairing();
     }
-    cubit.submitPairingCode(code);
   }
 
   void _syncClock(List<ConnectDevice> offline) {
@@ -91,9 +104,7 @@ class _ConnectViewState extends State<_ConnectView> {
             current is ConnectReady && current.needsPairingCode,
         listener: (context, state) {
           if (state is! ConnectReady) return;
-          unawaited(
-            _promptForCode(context.read<ConnectCubit>(), state.pairingLaptop),
-          );
+          unawaited(_promptForCode(context.read<ConnectCubit>(), state));
         },
         child: BlocBuilder<ConnectCubit, ConnectState>(
           builder: (context, state) {

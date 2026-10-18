@@ -7,6 +7,7 @@ import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/core/protocol/packet_buffer.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
+import 'package:tapikappflutter/services/security/laptop_id.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
@@ -36,6 +37,7 @@ Future<(int, int)> _freePorts() async {
 Future<SecureServerSocket> _lenientImpostor(
   AgentCertificate certificate, {
   bool askFirst = false,
+  bool takeAnyCode = false,
 }) async {
   final context = SecurityContext(withTrustedRoots: false)
     ..useCertificateChainBytes(utf8.encode(certificate.certificatePem))
@@ -52,6 +54,18 @@ Future<SecureServerSocket> _lenientImpostor(
       (chunk) {
         for (final packet in buffer.add(chunk)) {
           if (packet is PairPacket) {
+            if (takeAnyCode) {
+              socket.add(
+                PacketCodec.encode(
+                  PairPacket(
+                    packet.stage == PairStage.code
+                        ? PairStage.accepted
+                        : PairStage.codeRequired,
+                  ),
+                ),
+              );
+              continue;
+            }
             if (askFirst) {
               socket.add(
                 PacketCodec.encode(const PairPacket(PairStage.codeRequired)),
@@ -106,6 +120,36 @@ Future<void> main() async {
     'the certificate is PEM',
     mine.certificatePem.startsWith('-----BEGIN CERTIFICATE-----'),
     true,
+  );
+
+  stdout.writeln('');
+  stdout.writeln('the laptop ID');
+  final mineId = LaptopId.of(mine.fingerprint);
+  _check(
+    'it is four groups of four uppercase hex digits',
+    RegExp(r'^[0-9A-F]{4}( [0-9A-F]{4}){3}$').hasMatch(mineId ?? ''),
+    true,
+  );
+  _check(
+    'it is the first 8 bytes of the fingerprint',
+    mineId?.replaceAll(' ', '').toLowerCase(),
+    mine.fingerprint.substring(0, 16),
+  );
+  _check(
+    'another certificate gets another ID',
+    LaptopId.of(other.fingerprint) == mineId,
+    false,
+  );
+  _check('no fingerprint, no ID', LaptopId.of(null), null);
+  _check(
+    'a fingerprint too short for 8 bytes gives no ID',
+    [LaptopId.of('4fa29c1b77e0d3'), LaptopId.of('')],
+    [null, null],
+  );
+  _check(
+    'a fingerprint that is not hex gives no ID',
+    LaptopId.of('z' * 64),
+    null,
   );
 
   stdout.writeln('');
@@ -229,6 +273,87 @@ Future<void> main() async {
   );
   await rushed.dispose();
   await hasty.close();
+
+  final collector = await _lenientImpostor(other, takeAnyCode: true);
+  final fooled = NetworkTransport();
+  await fooled.connect(
+    TransportEndpoint(
+      clientId: _phone,
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: collector.port,
+      udpPort: ports.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 500));
+  _check(
+    'a fake laptop that asks for the code gets an unpinned phone to the '
+    'code step',
+    fooled.state,
+    TransportState.pairing,
+  );
+  _check(
+    'but the laptop ID the phone shows is not your laptop\'s',
+    LaptopId.of(fooled.peerFingerprint) == mineId,
+    false,
+  );
+  _check(
+    'it is the ID of the certificate the fake presented',
+    LaptopId.of(fooled.peerFingerprint),
+    LaptopId.of(other.fingerprint),
+  );
+  await fooled.dispose();
+  await collector.close();
+
+  final chained = await _lenientImpostor(
+    AgentCertificate(
+      certificatePem:
+          '''
+${other.certificatePem.trim()}
+${mine.certificatePem.trim()}
+''',
+      privateKeyPem: other.privateKeyPem,
+    ),
+    takeAnyCode: true,
+  );
+  final copied = NetworkTransport();
+  await copied.connect(
+    TransportEndpoint(
+      clientId: _phone,
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: chained.port,
+      udpPort: ports.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 500));
+  _check(
+    'a fake that also sends your laptop\'s certificate in its chain still '
+    'shows its own ID',
+    LaptopId.of(copied.peerFingerprint),
+    LaptopId.of(other.fingerprint),
+  );
+  await copied.dispose();
+  final pinnedPhone = NetworkTransport();
+  Object? chainRefusal;
+  try {
+    await pinnedPhone.connect(
+      TransportEndpoint(
+        clientId: _phone,
+        host: InternetAddress.loopbackIPv4.address,
+        tcpPort: chained.port,
+        udpPort: ports.$2,
+        fingerprint: mine.fingerprint,
+      ),
+    );
+  } catch (error) {
+    chainRefusal = error;
+  }
+  _check(
+    'and a phone pinned to your laptop refuses it',
+    [chainRefusal is Failure, pinnedPhone.state],
+    [true, TransportState.disconnected],
+  );
+  await pinnedPhone.dispose();
+  await chained.close();
   await agent.dispose();
 
   stdout.writeln('');
@@ -255,6 +380,12 @@ Future<void> main() async {
     'an unpinned phone is asked for the code',
     unpinned.state,
     TransportState.pairing,
+  );
+  _check(
+    'before the code is typed, the phone shows the same laptop ID as the '
+    'laptop window',
+    LaptopId.of(unpinned.peerFingerprint),
+    LaptopId.of(tofuAgent.certificate.fingerprint),
   );
   unpinned.submitPairingCode(tofuAgent.guard.visibleCode!);
   await Future<void>.delayed(const Duration(milliseconds: 400));

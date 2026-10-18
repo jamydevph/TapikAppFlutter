@@ -8,6 +8,7 @@ import '../../../data/repositories/device_repository.dart';
 import '../../../services/discovery/discovery.dart';
 import '../../../services/security/controller_identity.dart';
 import '../../../services/security/fingerprint_store.dart';
+import '../../../services/security/laptop_id.dart';
 import '../../../services/transport/transport.dart';
 import 'connect_state.dart';
 
@@ -18,6 +19,13 @@ class ConnectCubit extends Cubit<ConnectState> {
   static const Duration reconnectStep = Duration(seconds: 1);
   static const Duration maxReconnectDelay = Duration(seconds: 30);
   static const int maxReconnectAttempts = 8;
+  static const int maxNameLength = 40;
+
+  static final RegExp _unsafeNameCharacters = RegExp(
+    r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+',
+    unicode: true,
+  );
+  static final RegExp _spaces = RegExp(r'\s+');
 
   final DeviceRepository _devices;
   final AgentBrowser _browser;
@@ -36,8 +44,11 @@ class ConnectCubit extends Cubit<ConnectState> {
   DiscoveredAgent? _pairingAgent;
   bool _needsCode = false;
   bool _codeRequested = false;
+  String? _codeAgentId;
+  String? _codeFingerprint;
   int _dials = 0;
   final Set<String> _revokedIds = <String>{};
+  final Set<String> _rejectedFingerprints = <String>{};
   String? _reconnectId;
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
@@ -191,6 +202,36 @@ class ConnectCubit extends Cubit<ConnectState> {
     await disconnect();
   }
 
+  Future<void> rejectLaptop(String? laptopId) async {
+    final agentId = _codeAgentId;
+    final fingerprint = _codeFingerprint;
+    _codeAgentId = null;
+    _codeFingerprint = null;
+    _needsCode = false;
+    await disconnect();
+    if (agentId == null ||
+        fingerprint == null ||
+        laptopId == null ||
+        LaptopId.of(fingerprint) != laptopId) {
+      return;
+    }
+    _rejectedFingerprints.add(fingerprint);
+    if (await FingerprintStore.load(agentId) == fingerprint) {
+      await FingerprintStore.forget(agentId);
+    }
+    if (_registeredFingerprint(agentId) == fingerprint) {
+      unawaited(_revokeQuietly(agentId));
+    }
+  }
+
+  Future<void> _revokeQuietly(String agentId) async {
+    try {
+      await _devices.revokeDevice(agentId);
+    } on Failure {
+      return;
+    }
+  }
+
   void dismissConnectionError() {
     if (_connectionError == null) return;
     _connectionError = null;
@@ -235,6 +276,7 @@ class ConnectCubit extends Cubit<ConnectState> {
   Future<void> _inheritFingerprints(List<DeviceModel> registry) async {
     for (final device in registry) {
       if (device.certFingerprint.isEmpty) continue;
+      if (_rejectedFingerprints.contains(device.certFingerprint)) continue;
       final local = await FingerprintStore.load(device.id);
       if (local != null || !_stillTrusts(device)) continue;
       await FingerprintStore.remember(device.id, device.certFingerprint);
@@ -312,15 +354,33 @@ class ConnectCubit extends Cubit<ConnectState> {
   }
 
   void _onCodeRequested(void _) {
-    _needsCode = true;
+    _askForCode();
     _codeRequested = true;
     _publish();
   }
 
   void _onPairingError(Failure failure) {
     _connectionError = failure.message;
-    if (_transport.state == TransportState.pairing) _needsCode = true;
+    if (_transport.state == TransportState.pairing) _askForCode();
     _publish();
+  }
+
+  void _askForCode() {
+    _needsCode = true;
+    _codeAgentId = _pairingAgent?.id;
+    _codeFingerprint = _transport.peerFingerprint;
+  }
+
+  static String? _plainName(String name) {
+    final flat = name
+        .replaceAll(_unsafeNameCharacters, ' ')
+        .replaceAll(_spaces, ' ')
+        .trim();
+    if (flat.isEmpty) return null;
+    final runes = flat.runes.toList();
+    if (runes.length <= maxNameLength) return flat;
+    final kept = String.fromCharCodes(runes.take(maxNameLength - 1));
+    return '${kept.trimRight()}…';
   }
 
   void _onDiscoveryError(Failure failure) {
@@ -402,7 +462,11 @@ class ConnectCubit extends Cubit<ConnectState> {
         nearby: nearby,
         offline: offline,
         needsPairingCode: _needsCode,
-        pairingLaptop: _pairingAgent?.name,
+        pairingLaptop: switch (_pairingAgent) {
+          final agent? => _plainName(agent.name),
+          null => null,
+        },
+        pairingLaptopId: _needsCode ? LaptopId.of(_codeFingerprint) : null,
         connectionError: _connectionError,
         registryError: _registryError,
       ),

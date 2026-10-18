@@ -82,6 +82,14 @@ class AgentWindow extends StatelessWidget {
                               color: colors.textTertiary,
                             ),
                           ),
+                          if (state.laptopId case final laptopId?) ...[
+                            const SizedBox(height: AppSpacing.xl),
+                            const SectionLabel('LAPTOP ID'),
+                            const SizedBox(
+                              height: AppSpacing.xs + AppSpacing.x3s,
+                            ),
+                            _LaptopIdCard(laptopId: laptopId),
+                          ],
                           const SizedBox(height: AppSpacing.xl),
                           const SectionLabel('CONNECTED PHONE'),
                           const SizedBox(
@@ -266,6 +274,43 @@ class _CodeSlot extends StatelessWidget {
                 ),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LaptopIdCard extends StatelessWidget {
+  const _LaptopIdCard({required this.laptopId});
+
+  static const String hint =
+      'Your phone shows this ID while pairing. Pair only if the two match.';
+
+  final String laptopId;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.primarySubtle,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              laptopId,
+              style: AppTextStyles.monoM.copyWith(color: colors.textPrimary),
+            ),
+            const SizedBox(height: AppSpacing.x2s),
+            Text(
+              hint,
+              style: AppTextStyles.bodyS.copyWith(color: colors.textSecondary),
+            ),
           ],
         ),
       ),
