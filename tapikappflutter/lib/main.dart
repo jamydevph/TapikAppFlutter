@@ -15,6 +15,7 @@ import 'services/desktop/desktop_shell.dart';
 import 'services/discovery/agent_identity.dart';
 import 'services/discovery/bonsoir_discovery.dart';
 import 'services/injector/macos_injector.dart';
+import 'services/injector/windows_injector.dart';
 import 'services/security/certificate_store.dart';
 import 'services/security/pairing_guard.dart';
 import 'services/security/trust_store.dart';
@@ -30,7 +31,9 @@ Future<void> main() async {
       guard: PairingGuard(trustedClients: await TrustStore.load()),
       rememberClients: TrustStore.remember,
     );
-    final injector = MacosInjector.open();
+    final injector = Platform.isWindows
+        ? WindowsInjector.open()
+        : MacosInjector.open();
     final identity = await AgentIdentity.load();
     final advertiser = BonsoirAdvertiser(
       id: identity.id,

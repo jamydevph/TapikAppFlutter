@@ -84,11 +84,11 @@ The app transmits every keystroke, including passwords. Without protection it wo
 | Android | macOS | Wi-Fi + agent | ✅ built and run |
 | iOS | macOS | Wi-Fi + agent | 🟡 built, not yet run on a device |
 | Android | any computer | Bluetooth HID | 🟡 built and verified on the encoder; not yet run against a real host |
-| Any | Windows | Wi-Fi + agent | ⏳ the agent runs; the Windows injector is not written yet |
+| Any | Windows | Wi-Fi + agent | 🟡 injector built; cursor movement verified on a real PC, keys, clicks and scrolling not yet; the agent app not yet built or run |
 
 **Why iOS cannot be a Bluetooth keyboard:** CoreBluetooth refuses to publish the HID-over-GATT service (UUID `0x1812`); Apple reserves it and no entitlement unlocks it. That is why every iOS remote-mouse app ships a desktop companion, and why the network path is the primary one here.
 
-**Why the Bluetooth path needed no keymap:** the wire format already uses USB HID usage IDs for keys. The macOS injector translates them to virtual keys; the Bluetooth transport passes them straight through.
+**Why the Bluetooth path needed no keymap:** the wire format already uses USB HID usage IDs for keys. The macOS and Windows injectors translate them to each platform's virtual keys; the Bluetooth transport passes them straight through.
 
 ## Project layout
 
@@ -109,11 +109,14 @@ Requires Flutter 3.47 (Dart 3.13).
 ```bash
 cd tapikappflutter
 flutter pub get
-flutter run -d macos      # the agent
+flutter run -d macos      # the agent on a Mac
+flutter run -d windows    # the agent on a PC
 flutter run -d <phone>    # the controller
 ```
 
 On macOS the agent needs **Accessibility** permission (System Settings → Privacy & Security → Accessibility). An unsigned debug build loses it on every rebuild; remove the stale entry with **−** and add the app again — toggling it is not enough.
+
+On Windows the agent needs no permission, but building it needs Visual Studio with the **Desktop development with C++** workload, and Flutter's plugins need **Developer Mode** (Settings → System → For developers). Allow it on private networks when Windows Firewall asks on first run. Windows does not let an ordinary app send input to an elevated one, so Task Manager, admin terminals and UAC prompts cannot be controlled from the phone — that is by design, not a bug.
 
 `tool/` holds development scripts that drive the real protocol, transport and server over loopback — for example `dart run tool/security_scratch.dart`.
 
@@ -149,4 +152,4 @@ xcrun stapler staple Tapikapp.app
 
 **iOS** — needs the Apple Developer Program; archive in Xcode and upload to TestFlight.
 
-**Windows** — waiting on the Windows injector.
+**Windows** — `flutter build windows --release` produces a folder under `build/windows/x64/runner/Release`; zip it and ship it as a portable download. The PC also needs the Microsoft Visual C++ 2015–2022 Redistributable (x64), because `msvcp140.dll` and `vcruntime140*.dll` are not bundled yet. Without a code-signing certificate, SmartScreen warns on first launch.
