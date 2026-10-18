@@ -227,9 +227,16 @@ class _LaptopIdCard extends StatelessWidget {
                 style: AppTextStyles.bodyS.copyWith(color: colors.textDanger),
               )
             else ...[
-              Text(
-                id,
-                style: AppTextStyles.monoM.copyWith(color: colors.textPrimary),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  id,
+                  maxLines: 1,
+                  style: AppTextStyles.monoM.copyWith(
+                    color: colors.textPrimary,
+                  ),
+                ),
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(

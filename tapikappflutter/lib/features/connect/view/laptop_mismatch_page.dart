@@ -100,10 +100,15 @@ class LaptopMismatchPage extends StatelessWidget {
                                   ),
                                 ),
                                 const SizedBox(height: AppSpacing.x2s),
-                                Text(
-                                  seen,
-                                  style: AppTextStyles.monoM.copyWith(
-                                    color: colors.textDanger,
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    seen,
+                                    maxLines: 1,
+                                    style: AppTextStyles.monoM.copyWith(
+                                      color: colors.textDanger,
+                                    ),
                                   ),
                                 ),
                               ],

@@ -22,10 +22,40 @@ class ConnectCubit extends Cubit<ConnectState> {
   static const int maxNameLength = 40;
 
   static final RegExp _unsafeNameCharacters = RegExp(
-    r'[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+',
+    r'[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}]+',
     unicode: true,
   );
+  static final String _maskedCharacters =
+      '0-9A-Za-z${String.fromCharCodes(_hexLookalikes.keys)}'
+      '${String.fromCharCode(0xFF10)}-${String.fromCharCode(0xFF19)}'
+      '${String.fromCharCode(0xFF21)}-${String.fromCharCode(0xFF26)}'
+      '${String.fromCharCode(0xFF41)}-${String.fromCharCode(0xFF46)}';
+  static final RegExp _ignorableNearText = RegExp(
+    '(?<=[$_maskedCharacters])'
+    r'\p{Default_Ignorable_Code_Point}+'
+    '|'
+    r'\p{Default_Ignorable_Code_Point}+'
+    '(?=[$_maskedCharacters])',
+    unicode: true,
+  );
+  static final RegExp _idLikeName = RegExp(
+    r'[0-9A-Fa-f]{4}(?:[^0-9A-Za-z]+[0-9A-Fa-f]{4})+'
+    r'|(?:[0-9A-Fa-f]{2}[^0-9A-Za-z]+){3,}[0-9A-Fa-f]{2}'
+    r'|[0-9A-Fa-f]{8,}',
+  );
   static final RegExp _spaces = RegExp(r'\s+');
+  static const Map<int, int> _hexLookalikes = {
+    0x0391: 0x41,
+    0x0392: 0x42,
+    0x0395: 0x45,
+    0x0410: 0x41,
+    0x0412: 0x42,
+    0x0415: 0x45,
+    0x0421: 0x43,
+    0x0430: 0x61,
+    0x0435: 0x65,
+    0x0441: 0x63,
+  };
 
   final DeviceRepository _devices;
   final AgentBrowser _browser;
@@ -107,6 +137,7 @@ class ConnectCubit extends Cubit<ConnectState> {
     try {
       final identity = await ControllerIdentity.load();
       final pinned = await FingerprintStore.load(agent.id);
+      if (_userDisconnected) return;
       await _transport.connect(
         TransportEndpoint(
           clientId: identity.id,
@@ -276,9 +307,9 @@ class ConnectCubit extends Cubit<ConnectState> {
   Future<void> _inheritFingerprints(List<DeviceModel> registry) async {
     for (final device in registry) {
       if (device.certFingerprint.isEmpty) continue;
-      if (_rejectedFingerprints.contains(device.certFingerprint)) continue;
       final local = await FingerprintStore.load(device.id);
       if (local != null || !_stillTrusts(device)) continue;
+      if (_rejectedFingerprints.contains(device.certFingerprint)) continue;
       await FingerprintStore.remember(device.id, device.certFingerprint);
     }
   }
@@ -354,6 +385,7 @@ class ConnectCubit extends Cubit<ConnectState> {
   }
 
   void _onCodeRequested(void _) {
+    if (_transport.peerFingerprint == null) return;
     _askForCode();
     _codeRequested = true;
     _publish();
@@ -361,7 +393,10 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   void _onPairingError(Failure failure) {
     _connectionError = failure.message;
-    if (_transport.state == TransportState.pairing) _askForCode();
+    if (_transport.state == TransportState.pairing &&
+        _transport.peerFingerprint != null) {
+      _askForCode();
+    }
     _publish();
   }
 
@@ -372,15 +407,32 @@ class ConnectCubit extends Cubit<ConnectState> {
   }
 
   static String? _plainName(String name) {
-    final flat = name
+    final visible = name
         .replaceAll(_unsafeNameCharacters, ' ')
-        .replaceAll(_spaces, ' ')
-        .trim();
+        .replaceAll(_ignorableNearText, '');
+    final folded = String.fromCharCodes(visible.codeUnits.map(_foldLookalike));
+    final masked = StringBuffer();
+    var start = 0;
+    for (final match in _idLikeName.allMatches(folded)) {
+      masked
+        ..write(visible.substring(start, match.start))
+        ..write('…');
+      start = match.end;
+    }
+    masked.write(visible.substring(start));
+    final flat = masked.toString().replaceAll(_spaces, ' ').trim();
     if (flat.isEmpty) return null;
     final runes = flat.runes.toList();
     if (runes.length <= maxNameLength) return flat;
     final kept = String.fromCharCodes(runes.take(maxNameLength - 1));
     return '${kept.trimRight()}…';
+  }
+
+  static int _foldLookalike(int unit) {
+    if (unit >= 0xFF10 && unit <= 0xFF19) return unit - 0xFF10 + 0x30;
+    if (unit >= 0xFF21 && unit <= 0xFF26) return unit - 0xFF21 + 0x41;
+    if (unit >= 0xFF41 && unit <= 0xFF46) return unit - 0xFF41 + 0x61;
+    return _hexLookalikes[unit] ?? unit;
   }
 
   void _onDiscoveryError(Failure failure) {
