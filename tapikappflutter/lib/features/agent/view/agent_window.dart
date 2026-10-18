@@ -302,9 +302,14 @@ class _LaptopIdCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              laptopId,
-              style: AppTextStyles.monoM.copyWith(color: colors.textPrimary),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                laptopId,
+                maxLines: 1,
+                style: AppTextStyles.monoM.copyWith(color: colors.textPrimary),
+              ),
             ),
             const SizedBox(height: AppSpacing.x2s),
             Text(
