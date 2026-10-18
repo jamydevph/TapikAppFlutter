@@ -130,33 +130,17 @@ class _KeyboardViewState extends State<_KeyboardView> {
                         ],
                       ),
                       const SizedBox(height: AppSpacing.sm),
-                      const _ShortcutRow(
+                      _ShortcutRow(
                         children: [
-                          KeyCap(
-                            label: 'Previous track',
-                            icon: Icon(Icons.skip_previous_rounded),
-                            type: KeyCapType.modifier,
-                          ),
-                          KeyCap(
-                            label: 'Play or pause',
-                            icon: Icon(Icons.play_arrow_rounded),
-                            type: KeyCapType.modifier,
-                          ),
-                          KeyCap(
-                            label: 'Next track',
-                            icon: Icon(Icons.skip_next_rounded),
-                            type: KeyCapType.modifier,
-                          ),
-                          KeyCap(
-                            label: 'Volume down',
-                            icon: Icon(Icons.volume_down_rounded),
-                            type: KeyCapType.modifier,
-                          ),
-                          KeyCap(
-                            label: 'Volume up',
-                            icon: Icon(Icons.volume_up_rounded),
-                            type: KeyCapType.modifier,
-                          ),
+                          for (final media in _MediaKey.values)
+                            KeyCap(
+                              label: media.label,
+                              icon: Icon(media.icon),
+                              type: KeyCapType.modifier,
+                              onTap: connected
+                                  ? () => cubit.tapMedia(media.usage)
+                                  : null,
+                            ),
                         ],
                       ),
                     ],
@@ -270,6 +254,28 @@ class _KeyboardViewState extends State<_KeyboardView> {
       KeyModifier.control => 'Control',
     };
   }
+}
+
+enum _MediaKey {
+  previous(
+    'Previous track',
+    Icons.skip_previous_rounded,
+    Keycodes.mediaPreviousTrack,
+  ),
+  playPause('Play or pause', Icons.play_arrow_rounded, Keycodes.mediaPlayPause),
+  next('Next track', Icons.skip_next_rounded, Keycodes.mediaNextTrack),
+  volumeDown(
+    'Volume down',
+    Icons.volume_down_rounded,
+    Keycodes.mediaVolumeDown,
+  ),
+  volumeUp('Volume up', Icons.volume_up_rounded, Keycodes.mediaVolumeUp);
+
+  const _MediaKey(this.label, this.icon, this.usage);
+
+  final String label;
+  final IconData icon;
+  final int usage;
 }
 
 class _ModifierGlyph extends StatelessWidget {

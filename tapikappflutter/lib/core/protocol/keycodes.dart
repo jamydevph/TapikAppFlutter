@@ -190,7 +190,38 @@ class Keycodes {
     0xE7: 0x5C, // rightCommand
   };
 
+  static const int mediaNextTrack = 0xB5;
+  static const int mediaPreviousTrack = 0xB6;
+  static const int mediaPlayPause = 0xCD;
+  static const int mediaMute = 0xE2;
+  static const int mediaVolumeUp = 0xE9;
+  static const int mediaVolumeDown = 0xEA;
+
+  static const Map<int, int> _macosMediaKeys = <int, int>{
+    mediaVolumeUp: 0, // NX_KEYTYPE_SOUND_UP
+    mediaVolumeDown: 1, // NX_KEYTYPE_SOUND_DOWN
+    mediaMute: 7, // NX_KEYTYPE_MUTE
+    mediaPlayPause: 16, // NX_KEYTYPE_PLAY
+    mediaNextTrack: 17, // NX_KEYTYPE_NEXT
+    mediaPreviousTrack: 18, // NX_KEYTYPE_PREVIOUS
+  };
+
+  static const Map<int, int> _windowsMediaKeys = <int, int>{
+    mediaMute: 0xAD, // VK_VOLUME_MUTE
+    mediaVolumeDown: 0xAE, // VK_VOLUME_DOWN
+    mediaVolumeUp: 0xAF, // VK_VOLUME_UP
+    mediaNextTrack: 0xB0, // VK_MEDIA_NEXT_TRACK
+    mediaPreviousTrack: 0xB1, // VK_MEDIA_PREV_TRACK
+    mediaPlayPause: 0xB3, // VK_MEDIA_PLAY_PAUSE
+  };
+
   static int? macos(int usage) => _macosVirtualKeys[usage];
+
+  static int? macosMedia(int usage) => _macosMediaKeys[usage];
+
+  static int? windowsMedia(int usage) => _windowsMediaKeys[usage];
+
+  static Iterable<int> get mediaUsages => _windowsMediaKeys.keys;
 
   static int? windows(int usage) => _windowsVirtualKeys[usage];
 

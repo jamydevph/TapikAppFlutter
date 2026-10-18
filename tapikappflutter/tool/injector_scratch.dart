@@ -88,6 +88,19 @@ Future<void> main(List<String> args) async {
     stdout.writeln('not macOS — nothing to check');
     return;
   }
+  if (args.contains('--media')) {
+    final unbuilt = [
+      for (final usage in Keycodes.mediaUsages)
+        if (!injector.canBuildMediaEvent(usage)) '0x${usage.toRadixString(16)}',
+    ];
+    stdout.writeln(
+      'MEDIA EVENTS: built ${Keycodes.mediaUsages.length - unbuilt.length}/'
+      '${Keycodes.mediaUsages.length} as system-defined CGEvents without '
+      'posting  ${unbuilt.isEmpty ? 'PASS' : 'FAIL $unbuilt'}',
+    );
+    if (unbuilt.isNotEmpty) exitCode = 1;
+    return;
+  }
   final cursor = injector.readCursor();
   stdout.writeln('CGEventGetLocation: $cursor');
   stdout.writeln('CoreGraphics events build: ${injector.canBuildEvents()}');

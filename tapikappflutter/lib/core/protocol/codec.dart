@@ -22,6 +22,7 @@ class PacketCodec {
   static const int textHeaderLength = 3;
   static const int pairHeaderLength = 4;
   static const int pingLength = 1;
+  static const int mediaLength = 3;
 
   static Uint8List encode(Packet packet) {
     switch (packet) {
@@ -59,6 +60,12 @@ class PacketCodec {
         bytes[1] = stage.value;
         view.setUint16(2, payload.length, Endian.big);
         bytes.setRange(pairHeaderLength, bytes.length, payload);
+        return bytes;
+      case MediaPacket(:final usage):
+        final bytes = Uint8List(mediaLength);
+        final view = ByteData.view(bytes.buffer);
+        bytes[0] = PacketType.media.code;
+        view.setUint16(1, _clampKeyCode(usage), Endian.big);
         return bytes;
       case PingPacket():
         return Uint8List.fromList([PacketType.ping.code]);
@@ -121,6 +128,7 @@ class PacketCodec {
       PacketType.ping => pingLength,
       PacketType.text => textHeaderLength,
       PacketType.pair => pairHeaderLength,
+      PacketType.media => mediaLength,
     };
     if (available < fixed) return null;
     if (type == PacketType.pair) {
@@ -183,6 +191,8 @@ class PacketCodec {
         } on FormatException {
           return null;
         }
+      case PacketType.media:
+        return MediaPacket(view.getUint16(offset + 1, Endian.big));
       case PacketType.ping:
         return const PingPacket();
     }

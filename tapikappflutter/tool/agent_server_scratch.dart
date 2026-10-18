@@ -67,6 +67,7 @@ Future<void> main() async {
     ButtonPacket(button: PointerButton.left, down: false),
     KeyPacket(keyCode: 8, modifiers: KeyModifiers(command: true), down: true),
     ButtonPacket(button: PointerButton.middle, down: true),
+    MediaPacket(0xCD),
   ];
   for (final packet in reliable) {
     phone.send(packet);
@@ -74,7 +75,7 @@ Future<void> main() async {
   await _settle();
   checks.add(
     _Check(
-      'keys and clicks arrive over TCP in order',
+      'keys, clicks and media taps arrive over TCP in order',
       seen.toString() == reliable.toString(),
       '${seen.length} of ${reliable.length}',
     ),

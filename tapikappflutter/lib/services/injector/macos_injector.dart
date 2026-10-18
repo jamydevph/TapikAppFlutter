@@ -132,6 +132,48 @@ typedef _DictionaryCreate = Pointer<Void> Function(
   Pointer<Void>,
 );
 
+typedef _ObjcLookupNative = Pointer<Void> Function(Pointer<Utf8>);
+typedef _ObjcLookup = Pointer<Void> Function(Pointer<Utf8>);
+
+typedef _PoolPushNative = Pointer<Void> Function();
+typedef _PoolPush = Pointer<Void> Function();
+
+typedef _PoolPopNative = Void Function(Pointer<Void>);
+typedef _PoolPop = void Function(Pointer<Void>);
+
+typedef _OtherEventNative = Pointer<Void> Function(
+  Pointer<Void>,
+  Pointer<Void>,
+  Uint64,
+  _CGPointStruct,
+  Uint64,
+  Double,
+  Int64,
+  Pointer<Void>,
+  Int16,
+  Int64,
+  Int64,
+);
+typedef _OtherEvent = Pointer<Void> Function(
+  Pointer<Void>,
+  Pointer<Void>,
+  int,
+  _CGPointStruct,
+  int,
+  double,
+  int,
+  Pointer<Void>,
+  int,
+  int,
+  int,
+);
+
+typedef _MessageNative = Pointer<Void> Function(Pointer<Void>, Pointer<Void>);
+typedef _Message = Pointer<Void> Function(Pointer<Void>, Pointer<Void>);
+
+typedef _EventGetTypeNative = Uint32 Function(Pointer<Void>);
+typedef _EventGetType = int Function(Pointer<Void>);
+
 class MacosInjector implements Injector {
   MacosInjector._(this._bindings);
 
@@ -187,6 +229,8 @@ class MacosInjector implements Injector {
   _Bounds? _bounds;
   InjectorPermission _permission = InjectorPermission.denied;
   bool _disposed = false;
+  _MediaBindings? _mediaBindings;
+  bool _mediaUnavailable = false;
 
   @override
   InjectorPermission get permission => _permission;
@@ -228,6 +272,8 @@ class MacosInjector implements Injector {
           _key(keyCode, modifiers, down);
         case TextPacket(:final text):
           _text(text);
+        case MediaPacket(:final usage):
+          _media(usage);
         case PairPacket():
           return;
         case PingPacket():
@@ -318,6 +364,48 @@ class MacosInjector implements Injector {
     if (move != nullptr) _bindings.release(move);
     if (scroll != nullptr) _bindings.release(scroll);
     return built;
+  }
+
+  bool canBuildMediaEvent(int usage) {
+    final keyType = Keycodes.macosMedia(usage);
+    final media = _ensureMedia();
+    if (_disposed || keyType == null || media == null) return false;
+    var type = -1;
+    final built = media.withEvent(
+      keyType,
+      true,
+      (event) => type = media.eventGetType(event),
+    );
+    return built && type == _MediaBindings.systemDefinedType;
+  }
+
+  void _media(int usage) {
+    final keyType = Keycodes.macosMedia(usage);
+    if (keyType == null) return;
+    final media = _ensureMedia();
+    if (media == null) {
+      _failures += 1;
+      return;
+    }
+    for (final down in [true, false]) {
+      final posted = media.withEvent(
+        keyType,
+        down,
+        (event) => _bindings.eventPost(_tapHid, event),
+      );
+      if (!posted) _failures += 1;
+    }
+  }
+
+  _MediaBindings? _ensureMedia() {
+    final existing = _mediaBindings;
+    if (existing != null || _mediaUnavailable) return existing;
+    try {
+      return _mediaBindings = _MediaBindings.load();
+    } on ArgumentError {
+      _mediaUnavailable = true;
+      return null;
+    }
   }
 
   void _move(double dx, double dy) {
@@ -525,6 +613,110 @@ class _Bounds {
   final double top;
   final double right;
   final double bottom;
+}
+
+class _MediaBindings {
+  _MediaBindings._({
+    required this.eventClass,
+    required this.otherEventSelector,
+    required this.cgEventSelector,
+    required this.otherEvent,
+    required this.message,
+    required this.poolPush,
+    required this.poolPop,
+    required this.eventGetType,
+  });
+
+  static const String appKit =
+      '/System/Library/Frameworks/AppKit.framework/AppKit';
+  static const String objcRuntime = '/usr/lib/libobjc.A.dylib';
+  static const int systemDefinedType = 14;
+  static const int auxControlButtons = 8;
+  static const int keyDownState = 0xA;
+  static const int keyUpState = 0xB;
+
+  final Pointer<Void> eventClass;
+  final Pointer<Void> otherEventSelector;
+  final Pointer<Void> cgEventSelector;
+  final _OtherEvent otherEvent;
+  final _Message message;
+  final _PoolPush poolPush;
+  final _PoolPop poolPop;
+  final _EventGetType eventGetType;
+
+  static _MediaBindings load() {
+    DynamicLibrary.open(appKit);
+    final objc = DynamicLibrary.open(objcRuntime);
+    final services = DynamicLibrary.open(_Bindings.applicationServices);
+    final getClass = objc.lookupFunction<_ObjcLookupNative, _ObjcLookup>(
+      'objc_getClass',
+    );
+    final registerName = objc.lookupFunction<_ObjcLookupNative, _ObjcLookup>(
+      'sel_registerName',
+    );
+    Pointer<Void> lookup(_ObjcLookup find, String name) {
+      final native = name.toNativeUtf8();
+      try {
+        final found = find(native);
+        if (found == nullptr) throw ArgumentError.value(name);
+        return found;
+      } finally {
+        malloc.free(native);
+      }
+    }
+
+    return _MediaBindings._(
+      eventClass: lookup(getClass, 'NSEvent'),
+      otherEventSelector: lookup(
+        registerName,
+        'otherEventWithType:location:modifierFlags:timestamp:'
+        'windowNumber:context:subtype:data1:data2:',
+      ),
+      cgEventSelector: lookup(registerName, 'CGEvent'),
+      otherEvent: objc.lookupFunction<_OtherEventNative, _OtherEvent>(
+        'objc_msgSend',
+      ),
+      message: objc.lookupFunction<_MessageNative, _Message>('objc_msgSend'),
+      poolPush: objc.lookupFunction<_PoolPushNative, _PoolPush>(
+        'objc_autoreleasePoolPush',
+      ),
+      poolPop: objc.lookupFunction<_PoolPopNative, _PoolPop>(
+        'objc_autoreleasePoolPop',
+      ),
+      eventGetType: services.lookupFunction<_EventGetTypeNative, _EventGetType>(
+        'CGEventGetType',
+      ),
+    );
+  }
+
+  bool withEvent(int keyType, bool down, void Function(Pointer<Void>) use) {
+    final state = down ? keyDownState : keyUpState;
+    final pool = poolPush();
+    final location = calloc<CGPoint>();
+    try {
+      final event = otherEvent(
+        eventClass,
+        otherEventSelector,
+        systemDefinedType,
+        location.ref,
+        state << 8,
+        0,
+        0,
+        nullptr,
+        auxControlButtons,
+        (keyType << 16) | (state << 8),
+        -1,
+      );
+      if (event == nullptr) return false;
+      final cgEvent = message(event, cgEventSelector);
+      if (cgEvent == nullptr) return false;
+      use(cgEvent);
+      return true;
+    } finally {
+      calloc.free(location);
+      poolPop(pool);
+    }
+  }
 }
 
 class CGPointSnapshot {

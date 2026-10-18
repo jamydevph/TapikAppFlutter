@@ -87,6 +87,12 @@ class WindowsInjector implements Injector {
     VK_RMENU,
     VK_LWIN,
     VK_RWIN,
+    VK_VOLUME_MUTE,
+    VK_VOLUME_DOWN,
+    VK_VOLUME_UP,
+    VK_MEDIA_NEXT_TRACK,
+    VK_MEDIA_PREV_TRACK,
+    VK_MEDIA_PLAY_PAUSE,
   };
   static const Set<int> modifierKeys = <int>{
     VK_LCONTROL,
@@ -156,6 +162,8 @@ class WindowsInjector implements Injector {
           _key(keyCode, modifiers, down);
         case TextPacket(:final text):
           _text(text);
+        case MediaPacket(:final usage):
+          _media(usage);
         case PairPacket():
           return;
         case PingPacket():
@@ -273,6 +281,12 @@ class WindowsInjector implements Injector {
       }
     }
     _send(inputs);
+  }
+
+  void _media(int usage) {
+    final virtualKey = Keycodes.windowsMedia(usage);
+    if (virtualKey == null) return;
+    _send([_keyInput(virtualKey, true), _keyInput(virtualKey, false)]);
   }
 
   void _press(List<WindowsInput> inputs, int virtualKey) {
