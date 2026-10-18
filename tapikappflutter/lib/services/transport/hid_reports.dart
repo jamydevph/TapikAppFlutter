@@ -145,7 +145,7 @@ class HidReports {
 
   List<HidReport> _scroll(int dx, int dy) {
     _wheelCarry += dy;
-    _panCarry += dx;
+    _panCarry -= dx;
     final wheel = _wheelCarry ~/ pixelsPerDetent;
     final pan = _panCarry ~/ pixelsPerDetent;
     _wheelCarry -= wheel * pixelsPerDetent;
