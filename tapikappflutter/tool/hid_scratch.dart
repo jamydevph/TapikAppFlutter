@@ -153,6 +153,31 @@ void main() {
     _signed(hid.encode(const ScrollPacket(dx: 0, dy: 40)).single.data[3]),
     1,
   );
+  hid = HidReports();
+  _check(
+    'a positive sideways delta pans left (AC Pan -1), the same way as '
+    'macOS wheel2 and the Windows injector',
+    _signed(hid.encode(const ScrollPacket(dx: 40, dy: 0)).single.data[4]),
+    -1,
+  );
+  _check(
+    'and a negative one pans right',
+    _signed(hid.encode(const ScrollPacket(dx: -40, dy: 0)).single.data[4]),
+    1,
+  );
+  _check(
+    'a sideways remainder still carries over',
+    [
+      hid.encode(const ScrollPacket(dx: 20, dy: 0)).length,
+      _signed(hid.encode(const ScrollPacket(dx: 20, dy: 0)).single.data[4]),
+    ],
+    [0, -1],
+  );
+  _check(
+    'vertical scrolling is unchanged',
+    _signed(hid.encode(const ScrollPacket(dx: 0, dy: 40)).single.data[3]),
+    1,
+  );
 
   stdout.writeln('');
   stdout.writeln('typing text');
