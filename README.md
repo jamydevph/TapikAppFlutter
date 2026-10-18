@@ -67,13 +67,15 @@ The app transmits every keystroke, including passwords. Without protection it wo
 | ✅ **Encrypted** | Keys and text travel over TLS. The agent generates a self-signed certificate on first run. |
 | ✅ **Physical presence** | An unknown phone must type a 6-digit code shown on the laptop's screen. Bonjour advertising is discovery, not consent. |
 | ✅ **Pinned** | After the first pairing the phone remembers the laptop's certificate and refuses any other. A laptop that lets a phone in *without* asking for a code is refused too. |
+| ✅ **Laptop ID check** | While pairing, the phone and the laptop both show a Laptop ID: the first 8 bytes of the SHA-256 fingerprint of the laptop's certificate, taken on the phone from the TLS handshake itself. If they don't match, the phone stops pairing and forgets that laptop. |
 | ✅ **Rate-limited** | Wrong codes back off per phone, so one stranger cannot lock out the owner. |
 | ✅ **Revocable** | Revoking a laptop ends the session and makes the laptop forget the revoking phone — at once if they are connected, otherwise the next time that phone reaches it — so pairing again needs a fresh code. A phone that holds no pin for a laptop always pairs from scratch. |
 | ✅ **Nothing left held** | A ping each way detects a dead link within 8 s, and the laptop releases every held key and button. |
 | ✅ **Account-scoped** | Firestore rules confine each user to `users/{uid}/**`. |
 | ⚠️ **Motion is not encrypted** | Pointer movement over UDP is unencrypted and authorised by the paired phone's address. Keys and text never travel this way. |
 | ⚠️ **A lost phone keeps its pairing** | Other signed-in phones drop a revoked laptop when they next sync with the account, but a phone that stays offline keeps its trust, and the laptop has no control yet to forget a phone on its own. |
-| ⚠️ **Identity is not yet key-bound** | The laptop's identity comes from its advertised name, and the phone identifies itself with a stored id rather than a key it can prove it holds. Binding both to keys is the next piece of work. |
+| ⚠️ **The laptop check relies on you** | A fake laptop on the same Wi-Fi can still ask for the code. The Laptop ID only stops it if you compare the two IDs. A key exchange bound to the code (PAKE) would make the check automatic. |
+| ⚠️ **The phone's identity is not key-bound** | The phone identifies itself with a stored id rather than a key it can prove it holds. |
 
 **Out of scope, deliberately:** any path that accepts input from outside the local network. No relay, no port forwarding. The cloud stores trust decisions, never input.
 

@@ -7,6 +7,7 @@ class AgentState extends Equatable {
     required this.hostName,
     required this.platformLabel,
     required this.isMacOS,
+    this.laptopId,
     this.listening = false,
     this.pairingCode,
     this.connectedPhone,
@@ -19,6 +20,7 @@ class AgentState extends Equatable {
   final String hostName;
   final String platformLabel;
   final bool isMacOS;
+  final String? laptopId;
   final bool listening;
   final String? pairingCode;
   final String? connectedPhone;
@@ -42,6 +44,7 @@ class AgentState extends Equatable {
       hostName: hostName,
       platformLabel: platformLabel,
       isMacOS: isMacOS,
+      laptopId: laptopId,
       listening: listening ?? this.listening,
       pairingCode: pairingCode == null ? this.pairingCode : pairingCode(),
       connectedPhone: connectedPhone == null
@@ -59,6 +62,7 @@ class AgentState extends Equatable {
     hostName,
     platformLabel,
     isMacOS,
+    laptopId,
     listening,
     pairingCode,
     connectedPhone,

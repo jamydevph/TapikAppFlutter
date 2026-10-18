@@ -124,6 +124,14 @@ class AppTextStyles {
     letterSpacing: 8,
   );
 
+  static const TextStyle monoM = TextStyle(
+    fontFamily: AppFonts.jetBrainsMono,
+    fontSize: 20,
+    height: 28 / 20,
+    fontWeight: FontWeight.w700,
+    letterSpacing: 1,
+  );
+
   static const TextStyle monoS = TextStyle(
     fontFamily: AppFonts.jetBrainsMono,
     fontSize: 13,
