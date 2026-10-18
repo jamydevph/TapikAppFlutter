@@ -45,6 +45,54 @@ void main() {
   _check('all 26 keyboard letters resolve', unmapped, []);
 
   stdout.writeln('');
+  stdout.writeln('every media key on the screen reaches both laptops');
+  final mediaKeys = <String, int>{
+    'previous track': Keycodes.mediaPreviousTrack,
+    'play or pause': Keycodes.mediaPlayPause,
+    'next track': Keycodes.mediaNextTrack,
+    'volume down': Keycodes.mediaVolumeDown,
+    'volume up': Keycodes.mediaVolumeUp,
+  };
+  for (final entry in mediaKeys.entries) {
+    _check(
+      '${entry.key} has a Mac and a Windows key',
+      Keycodes.macosMedia(entry.value) != null &&
+          Keycodes.windowsMedia(entry.value) != null,
+      true,
+    );
+  }
+  final macTypes = [
+    for (final usage in Keycodes.mediaUsages) Keycodes.macosMedia(usage),
+  ];
+  final windowsKeys = [
+    for (final usage in Keycodes.mediaUsages) Keycodes.windowsMedia(usage),
+  ];
+  _check(
+    'no two media usages share a Mac key type',
+    macTypes.toSet().length,
+    macTypes.length,
+  );
+  _check(
+    'or a Windows virtual key',
+    windowsKeys.toSet().length,
+    windowsKeys.length,
+  );
+  const mute = MediaPacket(Keycodes.mediaMute);
+  final decodedMute = PacketCodec.decodeOne(PacketCodec.encode(mute));
+  _check(
+    'consumer Mute (0xE2) shares a number with keyboard Left Alt, but '
+    'travels as a media packet, so it can never press Alt',
+    decodedMute is MediaPacket && decodedMute.usage == Keycodes.usageLeftOption,
+    true,
+  );
+  const media = MediaPacket(Keycodes.mediaPlayPause);
+  _check(
+    'a media tap round-trips the wire',
+    PacketCodec.decodeOne(PacketCodec.encode(media)),
+    media,
+  );
+
+  stdout.writeln('');
   stdout.writeln('the agent platform decides the shortcut modifier');
   _check('macOS uses command', Keycodes.primaryModifier('macOS').command, true);
   _check(

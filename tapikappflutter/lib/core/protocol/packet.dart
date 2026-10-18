@@ -7,7 +7,8 @@ enum PacketType {
   key(0x04),
   text(0x05),
   ping(0x06),
-  pair(0x07);
+  pair(0x07),
+  media(0x08);
 
   const PacketType(this.code);
 
@@ -195,6 +196,18 @@ class PairPacket extends Packet {
 
   @override
   List<Object?> get props => [type, stage, detail];
+}
+
+class MediaPacket extends Packet {
+  const MediaPacket(this.usage);
+
+  final int usage;
+
+  @override
+  PacketType get type => PacketType.media;
+
+  @override
+  List<Object?> get props => [type, usage];
 }
 
 class PingPacket extends Packet {

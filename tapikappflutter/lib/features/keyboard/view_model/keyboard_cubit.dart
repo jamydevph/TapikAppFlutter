@@ -48,6 +48,11 @@ class KeyboardCubit extends Cubit<KeyboardState> {
     tapKey(usage);
   }
 
+  void tapMedia(int usage) {
+    if (state.connection != KeyboardConnection.connected) return;
+    _transport.send(MediaPacket(usage));
+  }
+
   void sendText(String text) {
     if (text.isEmpty) return;
     if (state.connection != KeyboardConnection.connected) return;

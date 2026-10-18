@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:tapikappflutter/core/protocol/codec.dart';
+import 'package:tapikappflutter/core/protocol/keycodes.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 
 void main() {
@@ -42,6 +43,9 @@ void main() {
     _roundTrip('text multi-byte', const TextPacket('añ日本語')),
     _roundTrip('text emoji', const TextPacket('tap 👉🏽 tapik 🇵🇭')),
     _roundTrip('ping', const PingPacket()),
+    _roundTrip('media play/pause', const MediaPacket(Keycodes.mediaPlayPause)),
+    _roundTrip('media u16 max', const MediaPacket(Packet.maxKeyCode)),
+    _olderAgentsSkipMedia(),
     _sizes(),
     _clamping(),
     _textTruncation(),
@@ -81,6 +85,8 @@ _Check _sizes() {
     'key': PacketCodec.encode(const KeyPacket(keyCode: 1, down: true)).length,
     'ping': PacketCodec.encode(const PingPacket()).length,
     'text': PacketCodec.encode(const TextPacket('abc')).length,
+    'media': PacketCodec.encode(const MediaPacket(Keycodes.mediaVolumeUp))
+        .length,
   };
   final expected = {
     'move': 5,
@@ -89,6 +95,7 @@ _Check _sizes() {
     'key': 5,
     'ping': 1,
     'text': 6,
+    'media': 3,
   };
   return _Check(
     name: 'wire sizes',
@@ -218,6 +225,33 @@ _Check _strictDatagrams() {
     detail: leaked.isEmpty
         ? '${rejected.length} malformed datagrams rejected'
         : 'accepted ${leaked.join(', ')}',
+  );
+}
+
+_Check _olderAgentsSkipMedia() {
+  final misread = <int>[];
+  for (final usage in Keycodes.mediaUsages) {
+    final bytes = PacketCodec.encode(MediaPacket(usage));
+    final looksLikePacket = bytes
+        .skip(1)
+        .any((byte) => PacketType.fromCode(byte) != null);
+    if (looksLikePacket) misread.add(usage);
+  }
+  final stream = Uint8List.fromList([
+    ...PacketCodec.encode(const MediaPacket(Keycodes.mediaPlayPause)),
+    ...PacketCodec.encode(const PingPacket()),
+  ]);
+  final withoutMedia = Uint8List.fromList(
+    stream.where((byte) => byte != PacketType.media.code).toList(),
+  );
+  final decoded = PacketCodec.decode(withoutMedia).packets;
+  return _Check(
+    name: 'an agent that predates media skips it without misreading',
+    ok: misread.isEmpty && decoded.length == 1 && decoded.single is PingPacket,
+    detail: misread.isEmpty
+        ? '${Keycodes.mediaUsages.length} usages, no byte looks like another '
+              'packet; the next packet still decodes'
+        : 'misread $misread',
   );
 }
 

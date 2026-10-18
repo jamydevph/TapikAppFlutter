@@ -518,6 +518,49 @@ void _keys() {
   ]);
 }
 
+void _media() {
+  stdout.writeln('');
+  stdout.writeln('media keys');
+  final rig = _Rig();
+  final injector = rig.injector;
+  final expected = <int, int>{
+    Keycodes.mediaPlayPause: VK_MEDIA_PLAY_PAUSE,
+    Keycodes.mediaNextTrack: VK_MEDIA_NEXT_TRACK,
+    Keycodes.mediaPreviousTrack: VK_MEDIA_PREV_TRACK,
+    Keycodes.mediaVolumeUp: VK_VOLUME_UP,
+    Keycodes.mediaVolumeDown: VK_VOLUME_DOWN,
+    Keycodes.mediaMute: VK_VOLUME_MUTE,
+  };
+  final taps = <List<WindowsInput>>[];
+  for (final entry in expected.entries) {
+    injector.handle(MediaPacket(entry.key));
+    taps.add(List<WindowsInput>.of(rig.calls.single));
+    rig.calls.clear();
+  }
+  _check('each media key is one atomic down-and-up tap', [
+    for (final tap in taps) tap.length,
+  ], List<int>.filled(expected.length, 2));
+  _check('on the matching media virtual key, marked extended', taps, [
+    for (final virtualKey in expected.values)
+      [_down(virtualKey), _up(virtualKey)],
+  ]);
+  _check(
+    'and nothing is left held afterwards',
+    injector.heldKeys.length + injector.pendingReleases.length,
+    0,
+  );
+  injector.handle(const MediaPacket(0x0040));
+  _check('an unknown consumer usage sends nothing', rig.take().length, 0);
+  rig.accept = (inputs) => 1;
+  injector.handle(const MediaPacket(Keycodes.mediaVolumeUp));
+  rig.take();
+  _check(
+    'a rejected media key-up is retried like any other release',
+    injector.pendingReleases,
+    [_up(VK_VOLUME_UP)],
+  );
+}
+
 void _text() {
   stdout.writeln('');
   stdout.writeln('text is typed as Unicode, not as key codes');
@@ -720,6 +763,7 @@ Future<void> main(List<String> args) async {
   await _buttons();
   _scrolling();
   _keys();
+  _media();
   _text();
   _releaseAll();
   if (Platform.isWindows) {

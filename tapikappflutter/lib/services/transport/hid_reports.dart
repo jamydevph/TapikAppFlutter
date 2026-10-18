@@ -87,6 +87,7 @@ class HidReports {
         return _text(text);
       case PingPacket():
       case PairPacket():
+      case MediaPacket():
         return const <HidReport>[];
     }
   }

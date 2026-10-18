@@ -215,6 +215,11 @@ void main() {
         hid.encode(const PairPacket(PairStage.hello)).length,
     0,
   );
+  _check(
+    'media keys send nothing over Bluetooth yet (no consumer report)',
+    hid.encode(const MediaPacket(0xCD)).length,
+    0,
+  );
 
   stdout.writeln('');
   stdout.writeln('$_passed passed, $_failed failed');
