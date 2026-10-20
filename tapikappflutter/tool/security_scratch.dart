@@ -8,6 +8,7 @@ import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/core/protocol/packet_buffer.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
 import 'package:tapikappflutter/services/security/laptop_id.dart';
+import 'package:tapikappflutter/services/security/laptop_name.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
@@ -150,6 +151,157 @@ Future<void> main() async {
     'a fingerprint that is not hex gives no ID',
     LaptopId.of('z' * 64),
     null,
+  );
+
+  stdout.writeln('');
+  stdout.writeln('laptop names');
+  String styled(String text, int digitBase, int letterBase) =>
+      String.fromCharCodes([
+        for (final unit in text.codeUnits)
+          if (unit >= 0x30 && unit <= 0x39)
+            digitBase + unit - 0x30
+          else if (unit >= 0x41 && unit <= 0x5A)
+            letterBase + unit - 0x41
+          else
+            unit,
+      ]);
+  const fakeId = '4FA2 9C1B 77E0 D35C';
+  final note = String.fromCharCode(0x1F3B5);
+  _check(
+    'a plain name is kept as it is',
+    LaptopName.plain("Diane's MacBook Pro"),
+    "Diane's MacBook Pro",
+  );
+  _check(
+    'an ID typed into the name is masked',
+    LaptopName.plain('MacBook $fakeId'),
+    'MacBook …',
+  );
+  _check(
+    'an ID in bold math digits is masked',
+    LaptopName.plain('MacBook ${styled(fakeId, 0x1D7CE, 0x41)}'),
+    'MacBook …',
+  );
+  _check(
+    'an ID in monospace digits and sans-serif letters is masked',
+    LaptopName.plain('MacBook ${styled(fakeId, 0x1D7F6, 0x1D5A0)}'),
+    'MacBook …',
+  );
+  _check(
+    'an ID in segmented digits is masked',
+    LaptopName.plain('MacBook ${styled(fakeId, 0x1FBF0, 0x41)}'),
+    'MacBook …',
+  );
+  _check(
+    'an ID with letterlike E and F is masked',
+    LaptopName.plain(
+      'MacBook 4${String.fromCharCode(0x2131)}A2 9C1B 77${String.fromCharCode(0x2130)}0 D35C',
+    ),
+    'MacBook …',
+  );
+  _check(
+    'invisible characters between math digits do not hide an ID',
+    LaptopName.plain(
+      'MacBook ${styled(fakeId, 0x1D7CE, 0x41).replaceAll(' ', String.fromCharCode(0x200B))}',
+    ),
+    'MacBook …',
+  );
+  _check(
+    'an emoji before an ID stays and the ID is masked',
+    LaptopName.plain('$note MacBook $fakeId'),
+    '$note MacBook …',
+  );
+  _check(
+    'a lone math digit that is not an ID is kept',
+    LaptopName.plain('Room ${styled('4', 0x1D7CE, 0x41)} $note'),
+    'Room ${styled('4', 0x1D7CE, 0x41)} $note',
+  );
+  _check(
+    'a name with nothing visible gives no name',
+    LaptopName.plain(String.fromCharCodes([0x0007, 0x202E, 0x000A])),
+    null,
+  );
+  _check(
+    'an empty name is shown as the fallback',
+    LaptopName.shown(String.fromCharCodes([0x0007, 0x202E])),
+    LaptopName.fallback,
+  );
+  final long = LaptopName.plain('$note${'z' * 60}') ?? '';
+  _check(
+    'a long name is cut to the rune limit',
+    [long.runes.length, long.endsWith('…'), long.startsWith(note)],
+    [LaptopName.maxLength, true, true],
+  );
+
+  String swap(Map<String, int> letters) {
+    var text = fakeId;
+    letters.forEach((from, to) {
+      text = text.replaceFirst(from, String.fromCharCode(to));
+    });
+    return text;
+  }
+
+  _check(
+    'an ID with the letter O for zero is masked',
+    LaptopName.plain('MacBook 4FA2 9C1B 77EO D35C'),
+    'MacBook …',
+  );
+  _check(
+    'an ID with a lowercase o for zero is masked',
+    LaptopName.plain('MacBook 4FA2 9C1B 77Eo D35C'),
+    'MacBook …',
+  );
+  _check(
+    'an ID with I or l for one is masked',
+    [
+      LaptopName.plain('MacBook 4FA2 9CIB 77E0 D35C'),
+      LaptopName.plain('MacBook 4FA2 9ClB 77E0 D35C'),
+    ],
+    ['MacBook …', 'MacBook …'],
+  );
+  _check(
+    'an ID with Roman numeral C and D is masked',
+    LaptopName.plain('MacBook ${swap({'C': 0x216D, 'D': 0x216E})}'),
+    'MacBook …',
+  );
+  _check(
+    'an ID with double-struck D, Cyrillic d or Greek O is masked',
+    [
+      LaptopName.plain('MacBook ${swap({'D': 0x2145})}'),
+      LaptopName.plain('MacBook ${swap({'D': 0x0501})}'),
+      LaptopName.plain('MacBook ${swap({'0': 0x039F})}'),
+    ],
+    ['MacBook …', 'MacBook …', 'MacBook …'],
+  );
+  _check(
+    'a combining mark inside a group does not hide an ID',
+    LaptopName.plain(
+      'MacBook ${fakeId.replaceFirst('F', 'F${String.fromCharCode(0x0323)}')}',
+    ),
+    'MacBook …',
+  );
+  _check(
+    'an emoji between groups does not hide an ID',
+    LaptopName.plain('4FA2${note}9C1B tail'),
+    '… tail',
+  );
+  _check(
+    'ordinary words with l, o and I are kept',
+    [
+      LaptopName.plain('Dell Latitude'),
+      LaptopName.plain('Official MacBook'),
+      LaptopName.plain('Lobby iMac'),
+    ],
+    ['Dell Latitude', 'Official MacBook', 'Lobby iMac'],
+  );
+  _check(
+    'all-caps words made of hex letters are kept when no real digit is in them',
+    [
+      LaptopName.plain('Office DEAD BEEF'),
+      LaptopName.plain('CODE OFFICE'),
+      LaptopName.plain('DADDIO DEBBIE'),
+    ],
+    ['Office DEAD BEEF', 'CODE OFFICE', 'DADDIO DEBBIE'],
   );
 
   stdout.writeln('');

@@ -9,6 +9,7 @@ import '../../../services/discovery/discovery.dart';
 import '../../../services/security/controller_identity.dart';
 import '../../../services/security/fingerprint_store.dart';
 import '../../../services/security/laptop_id.dart';
+import '../../../services/security/laptop_name.dart';
 import '../../../services/transport/transport.dart';
 import 'connect_state.dart';
 
@@ -19,43 +20,6 @@ class ConnectCubit extends Cubit<ConnectState> {
   static const Duration reconnectStep = Duration(seconds: 1);
   static const Duration maxReconnectDelay = Duration(seconds: 30);
   static const int maxReconnectAttempts = 8;
-  static const int maxNameLength = 40;
-
-  static final RegExp _unsafeNameCharacters = RegExp(
-    r'[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}]+',
-    unicode: true,
-  );
-  static final String _maskedCharacters =
-      '0-9A-Za-z${String.fromCharCodes(_hexLookalikes.keys)}'
-      '${String.fromCharCode(0xFF10)}-${String.fromCharCode(0xFF19)}'
-      '${String.fromCharCode(0xFF21)}-${String.fromCharCode(0xFF26)}'
-      '${String.fromCharCode(0xFF41)}-${String.fromCharCode(0xFF46)}';
-  static final RegExp _ignorableNearText = RegExp(
-    '(?<=[$_maskedCharacters])'
-    r'\p{Default_Ignorable_Code_Point}+'
-    '|'
-    r'\p{Default_Ignorable_Code_Point}+'
-    '(?=[$_maskedCharacters])',
-    unicode: true,
-  );
-  static final RegExp _idLikeName = RegExp(
-    r'[0-9A-Fa-f]{4}(?:[^0-9A-Za-z]+[0-9A-Fa-f]{4})+'
-    r'|(?:[0-9A-Fa-f]{2}[^0-9A-Za-z]+){3,}[0-9A-Fa-f]{2}'
-    r'|[0-9A-Fa-f]{8,}',
-  );
-  static final RegExp _spaces = RegExp(r'\s+');
-  static const Map<int, int> _hexLookalikes = {
-    0x0391: 0x41,
-    0x0392: 0x42,
-    0x0395: 0x45,
-    0x0410: 0x41,
-    0x0412: 0x42,
-    0x0415: 0x45,
-    0x0421: 0x43,
-    0x0430: 0x61,
-    0x0435: 0x65,
-    0x0441: 0x63,
-  };
 
   final DeviceRepository _devices;
   final AgentBrowser _browser;
@@ -142,7 +106,7 @@ class ConnectCubit extends Cubit<ConnectState> {
         TransportEndpoint(
           clientId: identity.id,
           host: agent.host,
-          label: agent.name,
+          label: LaptopName.shown(agent.name),
           platform: agent.platform,
           fingerprint: pinned,
           tcpPort: agent.tcpPort,
@@ -157,7 +121,10 @@ class ConnectCubit extends Cubit<ConnectState> {
       _pairingAgent = null;
       _connectedAgent = null;
     } catch (error) {
-      if (manual) _connectionError = 'Could not connect to ${agent.name}.';
+      if (manual) {
+        _connectionError =
+            'Could not connect to ${LaptopName.shown(agent.name)}.';
+      }
       _pairingAgent = null;
       _connectedAgent = null;
     } finally {
@@ -336,7 +303,7 @@ class ConnectCubit extends Cubit<ConnectState> {
         await _devices.registerDevice(
           DeviceModel(
             id: agent.id,
-            name: agent.name,
+            name: LaptopName.shown(agent.name),
             platform: agent.platform,
             certFingerprint: fingerprint,
           ),
@@ -406,35 +373,6 @@ class ConnectCubit extends Cubit<ConnectState> {
     _codeFingerprint = _transport.peerFingerprint;
   }
 
-  static String? _plainName(String name) {
-    final visible = name
-        .replaceAll(_unsafeNameCharacters, ' ')
-        .replaceAll(_ignorableNearText, '');
-    final folded = String.fromCharCodes(visible.codeUnits.map(_foldLookalike));
-    final masked = StringBuffer();
-    var start = 0;
-    for (final match in _idLikeName.allMatches(folded)) {
-      masked
-        ..write(visible.substring(start, match.start))
-        ..write('…');
-      start = match.end;
-    }
-    masked.write(visible.substring(start));
-    final flat = masked.toString().replaceAll(_spaces, ' ').trim();
-    if (flat.isEmpty) return null;
-    final runes = flat.runes.toList();
-    if (runes.length <= maxNameLength) return flat;
-    final kept = String.fromCharCodes(runes.take(maxNameLength - 1));
-    return '${kept.trimRight()}…';
-  }
-
-  static int _foldLookalike(int unit) {
-    if (unit >= 0xFF10 && unit <= 0xFF19) return unit - 0xFF10 + 0x30;
-    if (unit >= 0xFF21 && unit <= 0xFF26) return unit - 0xFF21 + 0x41;
-    if (unit >= 0xFF41 && unit <= 0xFF46) return unit - 0xFF41 + 0x61;
-    return _hexLookalikes[unit] ?? unit;
-  }
-
   void _onDiscoveryError(Failure failure) {
     _connectionError = failure.message;
     _publish();
@@ -492,7 +430,7 @@ class ConnectCubit extends Cubit<ConnectState> {
       for (final agent in visible)
         ConnectDevice(
           id: agent.id,
-          name: agent.name,
+          name: LaptopName.shown(agent.name),
           platform: agent.platform,
           status: _statusFor(agent, trustedIds),
           address: agent.host,
@@ -503,7 +441,7 @@ class ConnectCubit extends Cubit<ConnectState> {
         if (!discoveredIds.contains(device.id))
           ConnectDevice(
             id: device.id,
-            name: device.name,
+            name: LaptopName.shown(device.name),
             platform: device.platform,
             status: ConnectDeviceStatus.offline,
             lastSeenAt: device.lastSeenAt,
@@ -515,7 +453,7 @@ class ConnectCubit extends Cubit<ConnectState> {
         offline: offline,
         needsPairingCode: _needsCode,
         pairingLaptop: switch (_pairingAgent) {
-          final agent? => _plainName(agent.name),
+          final agent? => LaptopName.plain(agent.name),
           null => null,
         },
         pairingLaptopId: _needsCode ? LaptopId.of(_codeFingerprint) : null,
