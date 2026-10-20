@@ -9,6 +9,7 @@ import '../../../data/models/settings_model.dart';
 import '../../../data/repositories/device_repository.dart';
 import '../../../data/repositories/settings_repository.dart';
 import '../../../services/security/fingerprint_store.dart';
+import '../../../services/security/laptop_name.dart';
 import 'settings_state.dart';
 
 class SettingsCubit extends Cubit<SettingsState> {
@@ -121,7 +122,7 @@ class SettingsCubit extends Cubit<SettingsState> {
             .map(
               (device) => SettingsDevice(
                 id: device.id,
-                name: device.name,
+                name: LaptopName.shown(device.name),
                 platform: device.platform,
                 certFingerprint: device.certFingerprint,
                 trustedAt: device.trustedAt,
