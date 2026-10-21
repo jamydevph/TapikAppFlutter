@@ -72,7 +72,8 @@ The app transmits every keystroke, including passwords. Without protection it wo
 | ✅ **Revocable** | Revoking a laptop ends the session and makes the laptop forget the revoking phone — at once if they are connected, otherwise the next time that phone reaches it — so pairing again needs a fresh code. A phone that holds no pin for a laptop always pairs from scratch. |
 | ✅ **Nothing left held** | A ping each way detects a dead link within 8 s, and the laptop releases every held key and button. |
 | ✅ **Account-scoped** | Firestore rules confine each user to `users/{uid}/**`. |
-| ⚠️ **Motion is not encrypted** | Pointer movement over UDP is unencrypted and authorised by the paired phone's address. Keys and text never travel this way. |
+| ✅ **Motion is signed** | Each pointer and scroll datagram carries a counter and an HMAC-SHA256 tag made with a fresh key the laptop hands the phone over TLS when it accepts. A forged, changed or replayed datagram is dropped, even from the phone's own address. |
+| ⚠️ **Motion is not encrypted** | Someone on the same Wi-Fi can still see pointer movement, though not change it. Keys and text never travel this way. |
 | ⚠️ **A lost phone keeps its pairing** | Other signed-in phones drop a revoked laptop when they next sync with the account, but a phone that stays offline keeps its trust, and the laptop has no control yet to forget a phone on its own. |
 | ⚠️ **The laptop check relies on you** | A fake laptop on the same Wi-Fi can still ask for the code. The Laptop ID only stops it if you compare the two IDs. A key exchange bound to the code (PAKE) would make the check automatic. |
 | ⚠️ **The phone's identity is not key-bound** | The phone identifies itself with a stored id rather than a key it can prove it holds. |
