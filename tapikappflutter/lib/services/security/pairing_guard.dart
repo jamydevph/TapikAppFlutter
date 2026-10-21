@@ -167,6 +167,12 @@ class PairingGuard {
     return _trusted.remove(client) ? client : null;
   }
 
+  int forgetAllClients() {
+    final forgotten = _trusted.length;
+    _trusted.clear();
+    return forgotten;
+  }
+
   PairingDecision _onCode(String entered) {
     final expected = _code;
     final expiry = _codeExpiry;

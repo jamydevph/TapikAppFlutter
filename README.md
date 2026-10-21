@@ -74,7 +74,8 @@ The app transmits every keystroke, including passwords. Without protection it wo
 | ✅ **Account-scoped** | Firestore rules confine each user to `users/{uid}/**`. |
 | ✅ **Motion is signed** | Each pointer and scroll datagram carries a counter and an HMAC-SHA256 tag made with a fresh key the laptop hands the phone over TLS when it accepts. A forged, changed or replayed datagram is dropped, even from the phone's own address. |
 | ⚠️ **Motion is not encrypted** | Someone on the same Wi-Fi can still see pointer movement, though not change it. Keys and text never travel this way. |
-| ⚠️ **A lost phone keeps its pairing** | Other signed-in phones drop a revoked laptop when they next sync with the account, but a phone that stays offline keeps its trust, and the laptop has no control yet to forget a phone on its own. |
+| ✅ **The laptop can forget phones** | "Forget all phones" in the agent window clears every phone the laptop trusts, saves that, and disconnects the one connected now, so a lost phone has to type a fresh code even if it never comes back online to be revoked. |
+| ⚠️ **Only all at once** | The laptop stores an id per phone but no name, so it can't yet forget a single phone and keep the rest. |
 | ⚠️ **The laptop check relies on you** | A fake laptop on the same Wi-Fi can still ask for the code. The Laptop ID only stops it if you compare the two IDs. A key exchange bound to the code (PAKE) would make the check automatic. |
 | ⚠️ **The phone's identity is not key-bound** | The phone identifies itself with a stored id rather than a key it can prove it holds. |
 

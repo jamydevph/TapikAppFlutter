@@ -24,6 +24,23 @@ class AgentWindow extends StatelessWidget {
   static const String noPhoneHint =
       'Open Tapikapp on your phone and pick this laptop.';
   static const String connectedHint = 'Connected over Wi-Fi';
+  static const String forgetHint =
+      'A forgotten phone has to type a pairing code to connect again.';
+  static const String forgetUnsavedHint =
+      'Tapikapp couldn’t save that, so the phones would be trusted again '
+      'after a restart. Press Forget all phones to try again.';
+
+  static Future<void> _confirmForgetAll(
+    BuildContext context,
+    AgentCubit cubit,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) =>
+          BlocProvider.value(value: cubit, child: const _ForgetAllDialog()),
+    );
+    if (confirmed == true) await cubit.forgetAllPhones();
+  }
 
   static String _accessTitle(InjectorPermission permission) {
     return switch (permission) {
@@ -108,6 +125,35 @@ class AgentWindow extends StatelessWidget {
                               state.error!,
                               style: AppTextStyles.caption.copyWith(
                                 color: colors.textDanger,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: AppSpacing.xl),
+                          const SectionLabel('PAIRED PHONES'),
+                          const SizedBox(
+                            height: AppSpacing.xs + AppSpacing.x3s,
+                          ),
+                          _PairedPhonesCard(
+                            count: state.pairedPhones,
+                            onForgetAll:
+                                state.pairedPhones > 0 || state.forgetUnsaved
+                                ? () => _confirmForgetAll(context, cubit)
+                                : null,
+                          ),
+                          if (state.forgetUnsaved) ...[
+                            const SizedBox(height: AppSpacing.xs),
+                            Text(
+                              AgentWindow.forgetUnsavedHint,
+                              style: AppTextStyles.caption.copyWith(
+                                color: colors.textDanger,
+                              ),
+                            ),
+                          ] else if (state.pairedPhones > 0) ...[
+                            const SizedBox(height: AppSpacing.xs),
+                            Text(
+                              AgentWindow.forgetHint,
+                              style: AppTextStyles.caption.copyWith(
+                                color: colors.textTertiary,
                               ),
                             ),
                           ],
@@ -317,6 +363,108 @@ class _LaptopIdCard extends StatelessWidget {
               style: AppTextStyles.bodyS.copyWith(color: colors.textSecondary),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PairedPhonesCard extends StatelessWidget {
+  const _PairedPhonesCard({required this.count, required this.onForgetAll});
+
+  static const String forgetAll = 'Forget all phones';
+
+  final int count;
+  final VoidCallback? onForgetAll;
+
+  @override
+  Widget build(BuildContext context) {
+    return SettingsGroup(
+      children: [
+        SettingRow(
+          title: switch (count) {
+            0 => 'No phones paired yet',
+            1 => '1 phone paired',
+            _ => '$count phones paired',
+          },
+          subtitle: switch (count) {
+            0 => 'A phone is added once its pairing code is typed.',
+            1 => 'It connects without typing a code.',
+            _ => 'They connect without typing a code.',
+          },
+        ),
+        Padding(
+          padding: SettingRow.padding,
+          child: AppDangerButton(label: forgetAll, onPressed: onForgetAll),
+        ),
+      ],
+    );
+  }
+}
+
+class _ForgetAllDialog extends StatelessWidget {
+  const _ForgetAllDialog();
+
+  static const double width = 340;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    final disconnects = context.select<AgentCubit, bool>(
+      (cubit) => cubit.state.hasConnection,
+    );
+    return Dialog(
+      backgroundColor: colors.elevated,
+      surfaceTintColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(AppSpacing.xl),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        side: BorderSide(color: colors.borderDefault),
+      ),
+      child: SizedBox(
+        width: width,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'Forget all phones?',
+                style: AppTextStyles.headingM.copyWith(
+                  color: colors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                disconnects
+                    ? 'Every phone will need a pairing code to connect again. '
+                          'The phone that’s connected now will be disconnected.'
+                    : 'Every phone will need a pairing code to connect again.',
+                style: AppTextStyles.bodyS.copyWith(
+                  color: colors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Expanded(
+                    child: AppDangerButton(
+                      label: 'Forget all',
+                      onPressed: () => Navigator.of(context).pop(true),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

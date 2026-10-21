@@ -19,6 +19,8 @@ class AgentServerState extends Equatable {
     this.listening = false,
     this.client,
     this.pairingCode,
+    this.pairedPhones = 0,
+    this.forgetUnsaved = false,
   });
 
   static const AgentServerState stopped = AgentServerState();
@@ -26,13 +28,34 @@ class AgentServerState extends Equatable {
   final bool listening;
   final String? client;
   final String? pairingCode;
+  final int pairedPhones;
+  final bool forgetUnsaved;
 
   bool get hasClient => client != null;
 
   bool get isPairing => pairingCode != null;
 
+  AgentServerState withTrust({
+    required int pairedPhones,
+    required bool forgetUnsaved,
+  }) {
+    return AgentServerState(
+      listening: listening,
+      client: client,
+      pairingCode: pairingCode,
+      pairedPhones: pairedPhones,
+      forgetUnsaved: forgetUnsaved,
+    );
+  }
+
   @override
-  List<Object?> get props => [listening, client, pairingCode];
+  List<Object?> get props => [
+    listening,
+    client,
+    pairingCode,
+    pairedPhones,
+    forgetUnsaved,
+  ];
 }
 
 class AgentServer {
@@ -76,6 +99,7 @@ class AgentServer {
   StreamSubscription<Uint8List>? _reader;
   Socket? _client;
   DatagramSeal? _seal;
+  bool _forgetUnsaved = false;
   int _packetCount = 0;
   int _generation = 0;
   bool _disposed = false;
@@ -87,6 +111,8 @@ class AgentServer {
   Stream<Packet> get packets => _packets.stream;
 
   int get packetCount => _packetCount;
+
+  int get pairedPhones => guard.trustedClients.length;
 
   SecurityContext _securityContext() {
     return SecurityContext(withTrustedRoots: false)
@@ -158,6 +184,21 @@ class AgentServer {
   Future<void> disconnectClient() async {
     await _dropClient();
     _emit(AgentServerState(listening: _state.listening));
+  }
+
+  Future<void> forgetAllPhones() async {
+    guard.forgetAllClients();
+    if (guard.isAccepted) await disconnectClient();
+    final remember = rememberClients;
+    try {
+      if (remember != null) await remember(guard.trustedClients);
+      _forgetUnsaved = false;
+    } catch (_) {
+      _forgetUnsaved = true;
+      rethrow;
+    } finally {
+      _emit(_state);
+    }
   }
 
   Future<void> dispose() async {
@@ -281,7 +322,14 @@ class AgentServer {
 
   void _persistTrust() {
     final remember = rememberClients;
-    if (remember != null) unawaited(remember(guard.trustedClients));
+    if (remember == null) return;
+    unawaited(
+      remember(guard.trustedClients).then((_) {
+        if (!_forgetUnsaved) return;
+        _forgetUnsaved = false;
+        _emit(_state);
+      }, onError: (Object _) {}),
+    );
   }
 
   void _reply(PairPacket packet) {
@@ -310,9 +358,13 @@ class AgentServer {
   bool _isStale(int generation) => _disposed || generation != _generation;
 
   void _emit(AgentServerState next) {
-    if (_state == next || _states.isClosed) return;
-    _state = next;
-    _states.add(next);
+    final stamped = next.withTrust(
+      pairedPhones: guard.trustedClients.length,
+      forgetUnsaved: _forgetUnsaved,
+    );
+    if (_state == stamped || _states.isClosed) return;
+    _state = stamped;
+    _states.add(stamped);
   }
 
   static String _labelFor(InternetAddress address) {

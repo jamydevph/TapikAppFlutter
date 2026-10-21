@@ -364,6 +364,7 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   void _onCodeRequested(void _) {
     if (_transport.peerFingerprint == null) return;
+    _cancelReconnect();
     _askForCode();
     _codeRequested = true;
     _publish();
