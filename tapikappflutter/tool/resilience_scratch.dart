@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
+import 'package:tapikappflutter/services/security/datagram_seal.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
@@ -150,7 +151,14 @@ Future<void> main() async {
     );
     try {
       socket.add(PacketCodec.encode(const PairPacket(PairStage.codeRequired)));
-      socket.add(PacketCodec.encode(const PairPacket(PairStage.accepted)));
+      socket.add(
+        PacketCodec.encode(
+          PairPacket(
+            PairStage.accepted,
+            DatagramSeal.encodeKey(DatagramSeal.newKey()),
+          ),
+        ),
+      );
     } catch (_) {}
   }, onError: (Object _) {});
   final patient = NetworkTransport(

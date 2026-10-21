@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:tapikappflutter/core/error/failure.dart';
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/core/protocol/packet_buffer.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
+import 'package:tapikappflutter/services/security/datagram_seal.dart';
 import 'package:tapikappflutter/services/security/laptop_id.dart';
 import 'package:tapikappflutter/services/security/laptop_name.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
@@ -837,7 +839,32 @@ ${mine.certificatePem.trim()}
     strictPorts.$2,
   );
   await Future<void>.delayed(const Duration(milliseconds: 300));
-  _check('motion over udp still arrives', delivered.length, paired + 1);
+  _check(
+    'unsigned motion from the phone\'s own address is dropped, since that '
+    'address can be faked',
+    delivered.length,
+    paired,
+  );
+  final forger = DatagramSeal(DatagramSeal.newKey());
+  raw.send(
+    forger.seal(PacketCodec.encode(const MovePacket(dx: 2, dy: 2)))!,
+    InternetAddress.loopbackIPv4,
+    strictPorts.$2,
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'motion signed with a key other than the session\'s is dropped',
+    delivered.length,
+    paired,
+  );
+  stranger.send(const MovePacket(dx: 3, dy: 3));
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'motion the paired phone signs with its session key arrives',
+    delivered.length == paired + 1 &&
+        delivered.last == const MovePacket(dx: 3, dy: 3),
+    true,
+  );
   raw.close();
 
   await stranger.dispose();
@@ -865,6 +892,69 @@ ${mine.certificatePem.trim()}
   _check('motion from nobody moves nothing', earlyDelivered.length, 0);
   shouter.close();
   await early.dispose();
+
+  stdout.writeln('');
+  stdout.writeln('signed motion datagrams');
+  final sessionKey = DatagramSeal.newKey();
+  final phoneSeal = DatagramSeal(sessionKey);
+  final laptopSeal = DatagramSeal(sessionKey);
+  final frame = PacketCodec.encode(const MovePacket(dx: 5, dy: -5));
+  final first = phoneSeal.seal(frame)!;
+  _check(
+    'a signed datagram is the frame plus a 4-byte counter and a 16-byte tag',
+    first.length,
+    frame.length + DatagramSeal.overhead,
+  );
+  _check(
+    'the laptop opens it back to the same frame',
+    PacketCodec.decodeOne(laptopSeal.open(first)!),
+    const MovePacket(dx: 5, dy: -5),
+  );
+  _check('the same datagram replayed is dropped', laptopSeal.open(first), null);
+  final second = phoneSeal.seal(frame)!;
+  final third = phoneSeal.seal(frame)!;
+  _check('a newer one opens', laptopSeal.open(third) != null, true);
+  _check(
+    'an older one that arrives late is dropped',
+    laptopSeal.open(second),
+    null,
+  );
+  final tampered = Uint8List.fromList(phoneSeal.seal(frame)!);
+  tampered[2] ^= 0x01;
+  _check('a changed byte is dropped', laptopSeal.open(tampered), null);
+  final counterBumped = Uint8List.fromList(phoneSeal.seal(frame)!);
+  counterBumped[frame.length + 3] ^= 0x01;
+  _check('a changed counter is dropped', laptopSeal.open(counterBumped), null);
+  _check(
+    'a datagram cut short is dropped',
+    laptopSeal.open(Uint8List.sublistView(phoneSeal.seal(frame)!, 0, 10)),
+    null,
+  );
+  _check(
+    'another session\'s key cannot open it',
+    DatagramSeal(DatagramSeal.newKey()).open(phoneSeal.seal(frame)!),
+    null,
+  );
+  _check(
+    'every session gets a fresh key',
+    DatagramSeal.encodeKey(DatagramSeal.newKey()) ==
+        DatagramSeal.encodeKey(DatagramSeal.newKey()),
+    false,
+  );
+  _check(
+    'the key survives the trip inside the accepted reply',
+    DatagramSeal.decodeKey(DatagramSeal.encodeKey(sessionKey)),
+    sessionKey,
+  );
+  _check(
+    'a missing or short key is refused',
+    [
+      DatagramSeal.decodeKey(''),
+      DatagramSeal.decodeKey('c2hvcnQ='),
+      DatagramSeal.decodeKey('not base64!'),
+    ],
+    [null, null, null],
+  );
 
   stdout.writeln('');
   stdout.writeln('$_passed passed, $_failed failed');

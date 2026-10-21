@@ -7,6 +7,7 @@ import '../../core/protocol/codec.dart';
 import '../../core/protocol/packet.dart';
 import '../../core/protocol/packet_buffer.dart';
 import '../security/agent_certificate.dart';
+import '../security/datagram_seal.dart';
 import 'transport.dart';
 
 class NetworkTransport implements Transport {
@@ -47,6 +48,7 @@ class NetworkTransport implements Transport {
   StreamSubscription<RawSocketEvent>? _datagramReader;
   InternetAddress? _address;
   String? _peerFingerprint;
+  DatagramSeal? _seal;
   bool _submittedCode = false;
   Timer? _keepalive;
   DateTime _lastHeard = DateTime.fromMillisecondsSinceEpoch(0);
@@ -193,6 +195,20 @@ class NetworkTransport implements Transport {
           unawaited(disconnect());
           return;
         }
+        final key = DatagramSeal.decodeKey(packet.detail);
+        if (key == null) {
+          if (!_pairingErrors.isClosed) {
+            _pairingErrors.add(
+              const HandshakeFailure(
+                'That laptop is running an older Tapikapp. '
+                'Update it, then try again.',
+              ),
+            );
+          }
+          unawaited(disconnect());
+          return;
+        }
+        _seal = DatagramSeal(key);
         _lastHeard = DateTime.now();
         _startKeepalive();
         _emit(TransportState.connected);
@@ -217,8 +233,9 @@ class NetworkTransport implements Transport {
     if (motionTypes.contains(packet.type)) {
       final datagrams = _datagrams;
       final address = _address;
-      if (datagrams == null || address == null) return;
-      datagrams.send(bytes, address, _udpPort);
+      final sealed = _seal?.seal(bytes);
+      if (datagrams == null || address == null || sealed == null) return;
+      datagrams.send(sealed, address, _udpPort);
       return;
     }
     final socket = _socket;
@@ -312,6 +329,7 @@ class NetworkTransport implements Transport {
     _address = null;
     _endpoint = null;
     _peerFingerprint = null;
+    _seal = null;
     _submittedCode = false;
     _keepalive?.cancel();
     _keepalive = null;

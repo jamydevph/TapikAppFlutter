@@ -11,6 +11,7 @@ import '../../core/protocol/packet.dart';
 import '../../core/protocol/packet_buffer.dart';
 import '../../core/resources/constants.dart';
 import '../security/agent_certificate.dart';
+import '../security/datagram_seal.dart';
 import '../security/pairing_guard.dart';
 
 class AgentServerState extends Equatable {
@@ -74,6 +75,7 @@ class AgentServer {
   StreamSubscription<RawSocketEvent>? _datagramReader;
   StreamSubscription<Uint8List>? _reader;
   Socket? _client;
+  DatagramSeal? _seal;
   int _packetCount = 0;
   int _generation = 0;
   bool _disposed = false;
@@ -229,8 +231,10 @@ class AgentServer {
     if (datagram == null) return;
     if (!guard.isAccepted) return;
     if (_labelFor(datagram.address) != _clientLabel) return;
+    final frame = _seal?.open(datagram.data);
+    if (frame == null) return;
     _lastHeard = DateTime.now();
-    final packet = PacketCodec.decodeOne(datagram.data);
+    final packet = PacketCodec.decodeOne(frame);
     if (packet == null) return;
     if (!motionTypes.contains(packet.type)) return;
     _deliver(packet);
@@ -240,7 +244,7 @@ class AgentServer {
     if (!guard.isAccepted) {
       final decision = guard.onPacket(packet);
       final reply = decision.reply;
-      if (reply != null) _reply(reply);
+      if (reply != null) _reply(_withSessionKey(reply));
       if (decision.changesTrust) _persistTrust();
       if (decision.shouldDrop) {
         unawaited(disconnectClient());
@@ -261,6 +265,13 @@ class AgentServer {
     }
     _packetCount += 1;
     if (!_packets.isClosed) _packets.add(packet);
+  }
+
+  PairPacket _withSessionKey(PairPacket reply) {
+    if (reply.stage != PairStage.accepted) return reply;
+    final key = DatagramSeal.newKey();
+    _seal = DatagramSeal(key);
+    return PairPacket(PairStage.accepted, DatagramSeal.encodeKey(key));
   }
 
   void _forgetClient() {
@@ -290,6 +301,7 @@ class AgentServer {
     _reader = null;
     _client = null;
     _clientLabel = null;
+    _seal = null;
     _buffer.clear();
     await reader?.cancel();
     client?.destroy();

@@ -9,6 +9,7 @@ import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/core/protocol/packet_buffer.dart';
 import 'package:tapikappflutter/services/input/pointer_pump.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
+import 'package:tapikappflutter/services/security/datagram_seal.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
 
@@ -16,6 +17,7 @@ const String _toolClient = 'tapikapp-dev-tool';
 const String _toolCode = '424242';
 
 late final AgentCertificate _certificate;
+DatagramSeal? _toolSeal;
 
 NetworkTransport _phone() {
   final transport = NetworkTransport();
@@ -27,8 +29,19 @@ void _answerPairing(Socket socket, PairPacket packet) {
   if (packet.stage == PairStage.hello || packet.stage == PairStage.introduce) {
     socket.add(PacketCodec.encode(const PairPacket(PairStage.codeRequired)));
   } else if (packet.stage == PairStage.code && packet.detail == _toolCode) {
-    socket.add(PacketCodec.encode(const PairPacket(PairStage.accepted)));
+    final key = DatagramSeal.newKey();
+    _toolSeal = DatagramSeal(key);
+    socket.add(
+      PacketCodec.encode(
+        PairPacket(PairStage.accepted, DatagramSeal.encodeKey(key)),
+      ),
+    );
   }
+}
+
+Packet? _openDatagram(Uint8List data) {
+  final frame = _toolSeal?.open(data);
+  return frame == null ? null : PacketCodec.decodeOne(frame);
 }
 
 Future<void> main() async {
@@ -396,7 +409,7 @@ Future<_Check> _ipv6Motion() async {
     if (event != RawSocketEvent.read) return;
     final datagram = datagrams.receive();
     if (datagram == null) return;
-    final packet = PacketCodec.decodeOne(datagram.data);
+    final packet = _openDatagram(datagram.data);
     if (packet != null) seen.add(packet);
   });
   final handshake = PacketBuffer();
@@ -582,7 +595,7 @@ class _LoopbackAgent {
     if (event != RawSocketEvent.read) return;
     final datagram = _datagrams.receive();
     if (datagram == null) return;
-    final packet = PacketCodec.decodeOne(datagram.data);
+    final packet = _openDatagram(datagram.data);
     if (packet != null) udpPackets.add(packet);
   }
 
