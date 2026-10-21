@@ -972,6 +972,134 @@ ${mine.certificatePem.trim()}
   );
 
   stdout.writeln('');
+  stdout.writeln('the laptop can forget every phone at once');
+  final wipePorts = await _freePorts();
+  var wipeSaved = <String>{_phone, 'second-phone'};
+  var wipeSaves = 0;
+  final wiping = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: const {_phone, 'second-phone'}),
+    rememberClients: (clients) async {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      wipeSaves += 1;
+      wipeSaved = clients;
+    },
+    tcpPort: wipePorts.$1,
+    udpPort: wipePorts.$2,
+  );
+  await wiping.start();
+  _check(
+    'the laptop reports how many phones it trusts',
+    wiping.state.pairedPhones,
+    2,
+  );
+  final fromScratch = NetworkTransport();
+  await fromScratch.connect(
+    TransportEndpoint(
+      clientId: 'second-phone',
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: wipePorts.$1,
+      udpPort: wipePorts.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'a phone that pairs from scratch drops out of the count',
+    [wiping.state.pairedPhones, wipeSaves],
+    [1, 1],
+  );
+  await fromScratch.dispose();
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  final wipeEndpoint = TransportEndpoint(
+    clientId: _phone,
+    host: InternetAddress.loopbackIPv4.address,
+    tcpPort: wipePorts.$1,
+    udpPort: wipePorts.$2,
+    fingerprint: mine.fingerprint,
+  );
+  final wipedPhone = NetworkTransport();
+  await wipedPhone.connect(wipeEndpoint);
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'a trusted phone is connected without a code',
+    wipedPhone.state,
+    TransportState.connected,
+  );
+  await wiping.forgetAllPhones();
+  _check(
+    'forgetting all phones finishes only once the cleared list is saved',
+    [wipeSaved.isEmpty, wipeSaves],
+    [true, 2],
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'it leaves none trusted, and the count says so',
+    [wiping.guard.trustedClients.isEmpty, wiping.state.pairedPhones],
+    [true, 0],
+  );
+  _check(
+    'the connected phone is dropped on both ends',
+    [wiping.state.hasClient, wipedPhone.state],
+    [false, TransportState.disconnected],
+  );
+  await wipedPhone.dispose();
+  final returningPhone = NetworkTransport();
+  await returningPhone.connect(wipeEndpoint);
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  final shownCode = wiping.guard.visibleCode;
+  _check(
+    'coming back, it is asked for the code instead of let in',
+    [returningPhone.state, shownCode != null],
+    [TransportState.pairing, true],
+  );
+  await wiping.forgetAllPhones();
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'forgetting again does not cut off a phone that is typing its code',
+    [returningPhone.state, wiping.guard.visibleCode == shownCode],
+    [TransportState.pairing, true],
+  );
+  _check('and saves again, so a save that failed can be retried', wipeSaves, 3);
+  await returningPhone.dispose();
+  await wiping.dispose();
+
+  var unsavedAttempts = 0;
+  final unsaved = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: const {_phone}),
+    rememberClients: (_) async {
+      unsavedAttempts += 1;
+      if (unsavedAttempts == 1) throw const DataFailure('disk full');
+    },
+    tcpPort: wipePorts.$1,
+    udpPort: wipePorts.$2,
+  );
+  Object? saveError;
+  try {
+    await unsaved.forgetAllPhones();
+  } catch (error) {
+    saveError = error;
+  }
+  _check(
+    'a save that fails is passed on, not swallowed',
+    saveError is DataFailure,
+    true,
+  );
+  _check(
+    'and the laptop remembers it is unsaved, so the window keeps the button '
+    'and a warning even with no phones trusted',
+    [unsaved.state.forgetUnsaved, unsaved.state.pairedPhones],
+    [true, 0],
+  );
+  await unsaved.forgetAllPhones();
+  _check(
+    'trying again clears the warning once the save works',
+    [unsaved.state.forgetUnsaved, unsavedAttempts],
+    [false, 2],
+  );
+  await unsaved.dispose();
+
+  stdout.writeln('');
   stdout.writeln('each session gets its own key from the laptop');
   final keyPorts = await _freePorts();
   final keyed = AgentServer(

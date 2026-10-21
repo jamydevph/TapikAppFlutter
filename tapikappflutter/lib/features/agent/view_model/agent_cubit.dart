@@ -26,6 +26,7 @@ class AgentCubit extends Cubit<AgentState> {
            platformLabel: platformLabel,
            isMacOS: isMacOS,
            laptopId: LaptopId.of(server.certificate.fingerprint),
+           pairedPhones: server.pairedPhones,
          ),
        );
 
@@ -78,12 +79,22 @@ class AgentCubit extends Cubit<AgentState> {
     unawaited(_server.disconnectClient());
   }
 
+  Future<void> forgetAllPhones() async {
+    try {
+      await _server.forgetAllPhones();
+    } catch (_) {
+      return;
+    }
+  }
+
   void _onServer(AgentServerState server) {
     emit(
       state.copyWith(
         listening: server.listening,
         pairingCode: () => server.pairingCode,
         connectedPhone: () => server.client,
+        pairedPhones: server.pairedPhones,
+        forgetUnsaved: server.forgetUnsaved,
         packetCount: server.hasClient ? _server.packetCount : 0,
         error: () => null,
       ),
