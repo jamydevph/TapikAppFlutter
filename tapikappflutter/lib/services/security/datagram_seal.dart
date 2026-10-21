@@ -17,11 +17,14 @@ class DatagramSeal {
   static const int maxCounter = 0xFFFFFFFF;
   static const int blockLength = 64;
   static const int digestLength = 32;
+  static const int replayWindow = 32;
+  static const int _windowMask = 0xFFFFFFFF;
 
   final HMac _mac;
   final Uint8List _digest = Uint8List(digestLength);
   int _sent = 0;
   int _received = 0;
+  int _seen = 0;
 
   static Uint8List newKey() {
     final random = Random.secure();
@@ -64,9 +67,24 @@ class DatagramSeal {
     if (difference != 0) return null;
     final counter = ByteData.sublistView(datagram)
         .getUint32(body - counterLength);
-    if (counter <= _received) return null;
-    _received = counter;
+    if (!_admit(counter)) return null;
     return Uint8List.sublistView(datagram, 0, body - counterLength);
+  }
+
+  bool _admit(int counter) {
+    if (counter == 0) return false;
+    if (counter > _received) {
+      final ahead = counter - _received;
+      _seen = ahead >= replayWindow ? 1 : ((_seen << ahead) | 1) & _windowMask;
+      _received = counter;
+      return true;
+    }
+    final behind = _received - counter;
+    if (behind >= replayWindow) return false;
+    final bit = 1 << behind;
+    if (_seen & bit != 0) return false;
+    _seen |= bit;
+    return true;
   }
 
   void _sign(Uint8List data, int length) {

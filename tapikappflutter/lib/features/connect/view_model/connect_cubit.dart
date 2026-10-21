@@ -87,12 +87,23 @@ class ConnectCubit extends Cubit<ConnectState> {
     }
     final agent = _agentFor(device.id);
     if (agent == null) return;
+    if (!agent.isCompatible) {
+      _connectionError = _versionMessage(agent);
+      _publish();
+      return;
+    }
     _cancelReconnect();
     _userDisconnected = false;
     await _dial(agent, manual: true);
   }
 
   Future<void> _dial(DiscoveredAgent agent, {required bool manual}) async {
+    if (!agent.isCompatible) {
+      if (!manual) _cancelReconnect();
+      _connectionError = _versionMessage(agent);
+      _publish();
+      return;
+    }
     _dials += 1;
     _connectingId = agent.id;
     _codeRequested = false;
@@ -360,11 +371,19 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   void _onPairingError(Failure failure) {
     _connectionError = failure.message;
+    if (failure is VersionFailure) _cancelReconnect();
     if (_transport.state == TransportState.pairing &&
         _transport.peerFingerprint != null) {
       _askForCode();
     }
     _publish();
+  }
+
+  static String _versionMessage(DiscoveredAgent agent) {
+    final laptop = LaptopName.shown(agent.name);
+    return agent.isNewer
+        ? '$laptop runs a newer Tapikapp. Update Tapikapp on this phone.'
+        : 'Update Tapikapp on $laptop, then try again.';
   }
 
   void _askForCode() {
@@ -468,7 +487,11 @@ class ConnectCubit extends Cubit<ConnectState> {
     if (agent.id == _connectingId || agent.id == _pairingAgent?.id) {
       return ConnectDeviceStatus.connecting;
     }
-    if (!agent.isCompatible) return ConnectDeviceStatus.incompatible;
+    if (!agent.isCompatible) {
+      return agent.isNewer
+          ? ConnectDeviceStatus.outdatedPhone
+          : ConnectDeviceStatus.incompatible;
+    }
     return trusted.contains(agent.id)
         ? ConnectDeviceStatus.available
         : ConnectDeviceStatus.untrusted;

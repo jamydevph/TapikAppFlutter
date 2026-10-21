@@ -109,14 +109,14 @@ Future<void> _run() async {
   checks.add(
     _Check(
       'keys and clicks go over TCP',
-      agent.tcpPackets.toString() == reliable.toString(),
+      _samePackets(agent.tcpPackets, reliable),
       '${agent.tcpPackets.length} of ${reliable.length}',
     ),
   );
   checks.add(
     _Check(
       'motion goes over UDP',
-      agent.udpPackets.toString() == motion.toString(),
+      _samePackets(agent.udpPackets, motion),
       '${agent.udpPackets.length} of ${motion.length}',
     ),
   );
@@ -137,7 +137,7 @@ Future<void> _run() async {
   checks.add(
     _Check(
       'incoming frames survive a write split inside a frame',
-      midway == 0 && received.toString() == replies.toString(),
+      midway == 0 && _samePackets(received, replies),
       'after a 2-byte chunk $midway, total ${received.length}',
     ),
   );
@@ -613,4 +613,12 @@ class _Check {
   final bool ok;
   final String detail;
   final bool skipped;
+}
+
+bool _samePackets(List<Packet> actual, List<Packet> expected) {
+  if (actual.length != expected.length) return false;
+  for (var i = 0; i < actual.length; i++) {
+    if (actual[i] != expected[i]) return false;
+  }
+  return true;
 }

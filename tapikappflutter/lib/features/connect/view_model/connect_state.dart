@@ -6,6 +6,7 @@ enum ConnectDeviceStatus {
   available,
   untrusted,
   incompatible,
+  outdatedPhone,
   offline,
 }
 
