@@ -20,6 +20,10 @@ class HandshakeFailure extends Failure {
   const HandshakeFailure(super.message);
 }
 
+class VersionFailure extends Failure {
+  const VersionFailure(super.message);
+}
+
 class InjectionFailure extends Failure {
   const InjectionFailure(super.message);
 }

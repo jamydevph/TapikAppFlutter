@@ -33,6 +33,8 @@ class DiscoveredAgent extends Equatable {
 
   bool get isCompatible => protocolVersion == TapikappConstants.protocolVersion;
 
+  bool get isNewer => protocolVersion > TapikappConstants.protocolVersion;
+
   static List<String> reachableHosts(List<String> addresses) {
     final ipv4 = <String>[];
     final ipv6 = <String>[];

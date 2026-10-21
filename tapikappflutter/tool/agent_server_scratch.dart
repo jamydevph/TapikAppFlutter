@@ -76,7 +76,7 @@ Future<void> main() async {
   checks.add(
     _Check(
       'keys, clicks and media taps arrive over TCP in order',
-      seen.toString() == reliable.toString(),
+      _samePackets(seen, reliable),
       '${seen.length} of ${reliable.length}',
     ),
   );
@@ -93,7 +93,7 @@ Future<void> main() async {
     _Check(
       'motion arrives over UDP',
       seen.length == reliable.length + motion.length &&
-          seen.skip(reliable.length).toList().toString() == motion.toString(),
+          _samePackets(seen.skip(reliable.length).toList(), motion),
       '${seen.length} total, tail ${seen.skip(reliable.length).toList()}',
     ),
   );
@@ -310,4 +310,12 @@ class _Check {
   final String name;
   final bool ok;
   final String detail;
+}
+
+bool _samePackets(List<Packet> actual, List<Packet> expected) {
+  if (actual.length != expected.length) return false;
+  for (var i = 0; i < actual.length; i++) {
+    if (actual[i] != expected[i]) return false;
+  }
+  return true;
 }

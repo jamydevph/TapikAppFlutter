@@ -183,6 +183,7 @@ class NetworkTransport implements Transport {
   void _onPair(PairPacket packet) {
     switch (packet.stage) {
       case PairStage.accepted:
+        if (_state != TransportState.pairing) return;
         if (_endpoint?.fingerprint == null && !_submittedCode) {
           if (!_pairingErrors.isClosed) {
             _pairingErrors.add(
@@ -199,7 +200,7 @@ class NetworkTransport implements Transport {
         if (key == null) {
           if (!_pairingErrors.isClosed) {
             _pairingErrors.add(
-              const HandshakeFailure(
+              const VersionFailure(
                 'That laptop is running an older Tapikapp. '
                 'Update it, then try again.',
               ),

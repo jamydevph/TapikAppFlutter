@@ -295,6 +295,7 @@ class _DeviceTile extends StatelessWidget {
         ConnectDeviceStatus.available => DeviceCardStatus.available,
         ConnectDeviceStatus.untrusted => DeviceCardStatus.untrusted,
         ConnectDeviceStatus.incompatible => DeviceCardStatus.offline,
+        ConnectDeviceStatus.outdatedPhone => DeviceCardStatus.offline,
         ConnectDeviceStatus.offline => DeviceCardStatus.offline,
       },
       onTap: switch (device.status) {
@@ -322,6 +323,8 @@ class _DeviceTile extends StatelessWidget {
         return '$platform · new laptop · tap to connect';
       case ConnectDeviceStatus.incompatible:
         return '$platform · update Tapikapp on this laptop';
+      case ConnectDeviceStatus.outdatedPhone:
+        return '$platform · update Tapikapp on this phone';
       case ConnectDeviceStatus.offline:
         final seen = device.lastSeenAt;
         return seen == null

@@ -907,16 +907,31 @@ ${mine.certificatePem.trim()}
   );
   _check(
     'the laptop opens it back to the same frame',
-    PacketCodec.decodeOne(laptopSeal.open(first)!),
-    const MovePacket(dx: 5, dy: -5),
+    PacketCodec.decodeOne(laptopSeal.open(first)!) ==
+        const MovePacket(dx: 5, dy: -5),
+    true,
   );
   _check('the same datagram replayed is dropped', laptopSeal.open(first), null);
   final second = phoneSeal.seal(frame)!;
   final third = phoneSeal.seal(frame)!;
   _check('a newer one opens', laptopSeal.open(third) != null, true);
   _check(
-    'an older one that arrives late is dropped',
+    'an older one that arrives late still opens, so its motion is kept',
+    laptopSeal.open(second) != null,
+    true,
+  );
+  _check(
+    'but that late one replayed is dropped',
     laptopSeal.open(second),
+    null,
+  );
+  final tooOld = phoneSeal.seal(frame)!;
+  for (var i = 0; i < DatagramSeal.replayWindow; i++) {
+    laptopSeal.open(phoneSeal.seal(frame)!);
+  }
+  _check(
+    'one that falls more than ${DatagramSeal.replayWindow} behind is dropped',
+    laptopSeal.open(tooOld),
     null,
   );
   final tampered = Uint8List.fromList(phoneSeal.seal(frame)!);
@@ -957,6 +972,212 @@ ${mine.certificatePem.trim()}
   );
 
   stdout.writeln('');
+  stdout.writeln('each session gets its own key from the laptop');
+  final keyPorts = await _freePorts();
+  final keyed = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: const {_phone}),
+    peerTimeout: const Duration(seconds: 1),
+    tcpPort: keyPorts.$1,
+    udpPort: keyPorts.$2,
+  );
+  final keyedDelivered = <Packet>[];
+  keyed.packets.listen(keyedDelivered.add);
+  await keyed.start();
+  final motion = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
+  void sendMotion(Uint8List datagram) {
+    motion.send(datagram, InternetAddress.loopbackIPv4, keyPorts.$2);
+  }
+
+  final firstSession = await _rawPhone(keyPorts.$1);
+  final firstSeal = DatagramSeal(firstSession.key);
+  sendMotion(
+    firstSeal.seal(PacketCodec.encode(const MovePacket(dx: 1, dy: 1)))!,
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'motion signed with the key the laptop just handed over arrives',
+    keyedDelivered.length == 1 &&
+        keyedDelivered.single == const MovePacket(dx: 1, dy: 1),
+    true,
+  );
+  final heldBack = firstSeal.seal(
+    PacketCodec.encode(const MovePacket(dx: 4, dy: 4)),
+  )!;
+  firstSession.socket.destroy();
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  final secondSession = await _rawPhone(keyPorts.$1);
+  _check(
+    'the next session gets a different key',
+    DatagramSeal.encodeKey(secondSession.key) ==
+        DatagramSeal.encodeKey(firstSession.key),
+    false,
+  );
+  sendMotion(heldBack);
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'a datagram signed in the earlier session is dropped in the next one',
+    keyedDelivered.length,
+    1,
+  );
+
+  for (var i = 0; i < 12; i++) {
+    sendMotion(
+      forger.seal(PacketCodec.encode(const MovePacket(dx: 1, dy: 0)))!,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  _check(
+    'forged datagrams do not keep a quiet session alive',
+    keyed.state.hasClient,
+    false,
+  );
+  secondSession.socket.destroy();
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+
+  final thirdSession = await _rawPhone(keyPorts.$1);
+  final thirdSeal = DatagramSeal(thirdSession.key);
+  for (var i = 0; i < 12; i++) {
+    sendMotion(
+      thirdSeal.seal(PacketCodec.encode(const MovePacket(dx: 1, dy: 0)))!,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
+  _check('signed datagrams do keep it alive', keyed.state.hasClient, true);
+  thirdSession.socket.destroy();
+  motion.close();
+  await keyed.dispose();
+
+  stdout.writeln('');
+  stdout.writeln('a second "accepted" in the same session');
+  final firstKey = DatagramSeal.newKey();
+  final doubler = await SecureServerSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+    SecurityContext(withTrustedRoots: false)
+      ..useCertificateChainBytes(utf8.encode(other.certificatePem))
+      ..usePrivateKeyBytes(utf8.encode(other.privateKeyPem)),
+  );
+  final doublerMotion = await RawDatagramSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+  );
+  final doublerSeal = DatagramSeal(firstKey);
+  final doublerSeen = <Packet>[];
+  doublerMotion.listen((event) {
+    if (event != RawSocketEvent.read) return;
+    final datagram = doublerMotion.receive();
+    if (datagram == null) return;
+    final frame = doublerSeal.open(datagram.data);
+    final packet = frame == null ? null : PacketCodec.decodeOne(frame);
+    if (packet != null) doublerSeen.add(packet);
+  });
+  doubler.listen((socket) {
+    unawaited(socket.done.catchError((Object _) => socket));
+    socket.listen(
+      (_) {},
+      onError: (Object _) => socket.destroy(),
+      onDone: socket.destroy,
+    );
+    socket.add(
+      PacketCodec.encode(
+        PairPacket(PairStage.accepted, DatagramSeal.encodeKey(firstKey)),
+      ),
+    );
+    socket.add(
+      PacketCodec.encode(
+        PairPacket(
+          PairStage.accepted,
+          DatagramSeal.encodeKey(DatagramSeal.newKey()),
+        ),
+      ),
+    );
+  }, onError: (Object _) {});
+  final steady = NetworkTransport();
+  await steady.connect(
+    TransportEndpoint(
+      clientId: _phone,
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: doubler.port,
+      udpPort: doublerMotion.port,
+      fingerprint: other.fingerprint,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  steady.send(const MovePacket(dx: 7, dy: 7));
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'does not swap the key the phone signs motion with',
+    steady.state == TransportState.connected &&
+        doublerSeen.length == 1 &&
+        doublerSeen.single == const MovePacket(dx: 7, dy: 7),
+    true,
+  );
+  await steady.dispose();
+  doublerMotion.close();
+  await doubler.close();
+
+  stdout.writeln('');
+  stdout.writeln('a laptop that accepts without handing over a key');
+  final keyless = await _lenientImpostor(other);
+  final outdated = NetworkTransport();
+  final outdatedErrors = <Failure>[];
+  final outdatedStates = <TransportState>[];
+  outdated.pairingErrors.listen(outdatedErrors.add);
+  outdated.states.listen(outdatedStates.add);
+  await outdated.connect(
+    TransportEndpoint(
+      clientId: _phone,
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: keyless.port,
+      udpPort: keyPorts.$2,
+      fingerprint: other.fingerprint,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 500));
+  _check(
+    'is refused, and the phone never reports connected',
+    [outdated.state, outdatedStates.contains(TransportState.connected)],
+    [TransportState.disconnected, false],
+  );
+  _check(
+    'and the phone is told the laptop needs updating',
+    outdatedErrors.isNotEmpty && outdatedErrors.last is VersionFailure,
+    true,
+  );
+  await outdated.dispose();
+  await keyless.close();
+
+  stdout.writeln('');
   stdout.writeln('$_passed passed, $_failed failed');
   if (_failed > 0) exitCode = 1;
+}
+
+Future<({SecureSocket socket, Uint8List key})> _rawPhone(int port) async {
+  final socket = await SecureSocket.connect(
+    InternetAddress.loopbackIPv4,
+    port,
+    onBadCertificate: (_) => true,
+  );
+  unawaited(socket.done.catchError((Object _) => socket));
+  final buffer = PacketBuffer();
+  final key = Completer<Uint8List>();
+  socket.listen(
+    (chunk) {
+      for (final packet in buffer.add(chunk)) {
+        if (packet is! PairPacket || packet.stage != PairStage.accepted) {
+          continue;
+        }
+        final received = DatagramSeal.decodeKey(packet.detail);
+        if (received != null && !key.isCompleted) key.complete(received);
+      }
+    },
+    onError: (Object _) {},
+    cancelOnError: true,
+  );
+  socket.add(PacketCodec.encode(const PairPacket(PairStage.hello, _phone)));
+  return (
+    socket: socket,
+    key: await key.future.timeout(const Duration(seconds: 2)),
+  );
 }
