@@ -26,7 +26,7 @@ class AgentCubit extends Cubit<AgentState> {
            platformLabel: platformLabel,
            isMacOS: isMacOS,
            laptopId: LaptopId.of(server.certificate.fingerprint),
-           pairedPhones: server.pairedPhones,
+           phones: server.phones,
          ),
        );
 
@@ -39,6 +39,7 @@ class AgentCubit extends Cubit<AgentState> {
   final AgentAdvertiser _advertiser;
   StreamSubscription<AgentServerState>? _link;
   Timer? _counter;
+  String? _failedPhone;
 
   Future<void> start() async {
     await _link?.cancel();
@@ -80,6 +81,9 @@ class AgentCubit extends Cubit<AgentState> {
   }
 
   Future<void> forgetAllPhones() async {
+    if (isClosed) return;
+    _failedPhone = null;
+    emit(state.copyWith(forgetFailed: false));
     try {
       await _server.forgetAllPhones();
     } catch (_) {
@@ -87,14 +91,34 @@ class AgentCubit extends Cubit<AgentState> {
     }
   }
 
+  Future<void> forgetPhone(String phoneId) async {
+    if (isClosed) return;
+    _failedPhone = null;
+    emit(state.copyWith(forgetFailed: false));
+    try {
+      await _server.forgetPhone(phoneId);
+    } catch (_) {
+      if (isClosed) return;
+      if (!_server.phones.any((phone) => phone.id == phoneId)) return;
+      _failedPhone = phoneId;
+      emit(state.copyWith(forgetFailed: true));
+    }
+  }
+
   void _onServer(AgentServerState server) {
+    final failed = _failedPhone;
+    if (failed != null && !server.phones.any((phone) => phone.id == failed)) {
+      _failedPhone = null;
+    }
     emit(
       state.copyWith(
         listening: server.listening,
         pairingCode: () => server.pairingCode,
         connectedPhone: () => server.client,
-        pairedPhones: server.pairedPhones,
+        connectedPhoneId: () => server.phoneId,
+        phones: server.phones,
         forgetUnsaved: server.forgetUnsaved,
+        forgetFailed: state.forgetFailed && _failedPhone != null,
         packetCount: server.hasClient ? _server.packetCount : 0,
         error: () => null,
       ),

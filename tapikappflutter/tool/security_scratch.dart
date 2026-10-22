@@ -11,6 +11,7 @@ import 'package:tapikappflutter/services/security/agent_certificate.dart';
 import 'package:tapikappflutter/services/security/datagram_seal.dart';
 import 'package:tapikappflutter/services/security/laptop_id.dart';
 import 'package:tapikappflutter/services/security/laptop_name.dart';
+import 'package:tapikappflutter/services/security/paired_phone.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
@@ -1098,6 +1099,197 @@ ${mine.certificatePem.trim()}
     [false, 2],
   );
   await unsaved.dispose();
+
+  stdout.writeln('');
+  stdout.writeln('the laptop can forget one phone and keep the rest');
+  var oneSaved = <String>{_phone, 'second-phone'};
+  var oneHistory = <PairedPhone>[];
+  final single = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(
+      trustedClients: const {_phone, 'second-phone'},
+      history: [
+        PairedPhone(
+          id: 'second-phone',
+          pairedAt: DateTime(2026, 10, 3),
+          lastSeenAt: DateTime(2026, 10, 19),
+        ),
+      ],
+    ),
+    rememberClients: (clients) async => oneSaved = clients,
+    rememberHistory: (phones) async => oneHistory = phones,
+    tcpPort: wipePorts.$1,
+    udpPort: wipePorts.$2,
+  );
+  await single.start();
+  _check(
+    'phones are listed newest pairing first, older pairings last',
+    single.phones.map((phone) => phone.id).join(','),
+    'second-phone,$_phone',
+  );
+  final keptPhone = NetworkTransport();
+  await keptPhone.connect(wipeEndpoint);
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'the window learns which paired phone is the connected one',
+    [keptPhone.state, single.state.phoneId],
+    [TransportState.connected, _phone],
+  );
+  _check(
+    'and connecting counts as seen, and is saved',
+    [
+      single.phones.firstWhere((phone) => phone.id == _phone).lastSeenAt !=
+          null,
+      oneHistory.any((phone) => phone.id == _phone && phone.lastSeenAt != null),
+    ],
+    [true, true],
+  );
+  await single.forgetPhone('second-phone');
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'forgetting another phone leaves the connected one alone',
+    [keptPhone.state, single.state.hasClient],
+    [TransportState.connected, true],
+  );
+  _check(
+    'and saves the trust without it',
+    [oneSaved.length, oneSaved.contains(_phone), single.state.pairedPhones],
+    [1, true, 1],
+  );
+  _check(
+    'its dates are dropped too',
+    oneHistory.any((phone) => phone.id == 'second-phone'),
+    false,
+  );
+  await single.forgetPhone('not-paired');
+  _check(
+    'forgetting a phone that is not paired changes nothing',
+    [oneSaved.length, single.state.hasClient],
+    [1, true],
+  );
+  await single.forgetPhone(_phone);
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'forgetting the connected phone drops it on both ends',
+    [single.state.hasClient, keptPhone.state],
+    [false, TransportState.disconnected],
+  );
+  _check(
+    'and leaves none trusted',
+    [oneSaved.isEmpty, single.state.pairedPhones, single.state.phoneId],
+    [true, 0, null],
+  );
+  await keptPhone.dispose();
+  await single.dispose();
+
+  final stubborn = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(
+      trustedClients: const {_phone, 'second-phone'},
+      history: [PairedPhone(id: 'second-phone', pairedAt: DateTime(2026, 9))],
+    ),
+    rememberClients: (_) async => throw const DataFailure('disk full'),
+    tcpPort: wipePorts.$1,
+    udpPort: wipePorts.$2,
+  );
+  Object? oneError;
+  try {
+    await stubborn.forgetPhone('second-phone');
+  } catch (error) {
+    oneError = error;
+  }
+  _check(
+    'a failed save for one phone is passed on, not swallowed',
+    oneError is DataFailure,
+    true,
+  );
+  _check(
+    'and that phone stays paired with its dates, so its row and Forget stay',
+    [
+      stubborn.state.pairedPhones,
+      stubborn.phones.first ==
+          PairedPhone(id: 'second-phone', pairedAt: DateTime(2026, 9)),
+    ],
+    [2, true],
+  );
+  await stubborn.dispose();
+
+  var raceSaves = 0;
+  final racing = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: const {_phone, 'second-phone'}),
+    rememberClients: (_) async {
+      raceSaves += 1;
+      if (raceSaves > 1) return;
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      throw const DataFailure('disk full');
+    },
+    tcpPort: wipePorts.$1,
+    udpPort: wipePorts.$2,
+  );
+  final slowForget = racing.forgetPhone('second-phone');
+  await racing.forgetAllPhones();
+  Object? lateError;
+  try {
+    await slowForget;
+  } catch (error) {
+    lateError = error;
+  }
+  _check(
+    'a forget whose save fails after Forget all phones worked does not '
+    'bring that phone back',
+    [
+      lateError is DataFailure,
+      racing.guard.trustedClients.isEmpty,
+      racing.state.pairedPhones,
+    ],
+    [true, true, 0],
+  );
+  await racing.dispose();
+
+  Future<AgentServer> overlap({required bool laterSaveWorks}) async {
+    var saves = 0;
+    final server = AgentServer(
+      certificate: mine,
+      guard: PairingGuard(trustedClients: const {_phone, 'b', 'c'}),
+      rememberClients: (_) async {
+        saves += 1;
+        final first = saves == 1;
+        await Future<void>.delayed(Duration(milliseconds: first ? 200 : 50));
+        if (first || !laterSaveWorks) throw const DataFailure('disk full');
+      },
+      tcpPort: wipePorts.$1,
+      udpPort: wipePorts.$2,
+    );
+    final forgetB = server.forgetPhone('b');
+    final forgetC = server.forgetPhone('c');
+    for (final pending in [forgetC, forgetB]) {
+      try {
+        await pending;
+      } catch (_) {}
+    }
+    return server;
+  }
+
+  final bothFail = await overlap(laterSaveWorks: false);
+  _check(
+    'when two forgets overlap and both saves fail, the window warns that '
+    'they were not saved instead of quietly dropping one',
+    [
+      bothFail.state.forgetUnsaved,
+      bothFail.guard.trustedClients.contains('b'),
+      bothFail.guard.trustedClients.contains('c'),
+    ],
+    [true, false, true],
+  );
+  await bothFail.dispose();
+  final laterWorks = await overlap(laterSaveWorks: true);
+  _check(
+    'but no warning shows once a later save without that phone has worked',
+    [laterWorks.state.forgetUnsaved, laterWorks.guard.trustedClients.length],
+    [false, 1],
+  );
+  await laterWorks.dispose();
 
   stdout.writeln('');
   stdout.writeln('each session gets its own key from the laptop');

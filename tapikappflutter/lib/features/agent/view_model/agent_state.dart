@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import '../../../services/injector/injector.dart';
+import '../../../services/security/paired_phone.dart';
 
 class AgentState extends Equatable {
   const AgentState({
@@ -11,8 +12,10 @@ class AgentState extends Equatable {
     this.listening = false,
     this.pairingCode,
     this.connectedPhone,
-    this.pairedPhones = 0,
+    this.connectedPhoneId,
+    this.phones = const [],
     this.forgetUnsaved = false,
+    this.forgetFailed = false,
     this.launchAtLogin = false,
     this.packetCount = 0,
     this.error,
@@ -26,8 +29,10 @@ class AgentState extends Equatable {
   final bool listening;
   final String? pairingCode;
   final String? connectedPhone;
-  final int pairedPhones;
+  final String? connectedPhoneId;
+  final List<PairedPhone> phones;
   final bool forgetUnsaved;
+  final bool forgetFailed;
   final bool launchAtLogin;
   final int packetCount;
   final String? error;
@@ -35,12 +40,16 @@ class AgentState extends Equatable {
 
   bool get hasConnection => connectedPhone != null;
 
+  int get pairedPhones => phones.length;
+
   AgentState copyWith({
     bool? listening,
     String? Function()? pairingCode,
     String? Function()? connectedPhone,
-    int? pairedPhones,
+    String? Function()? connectedPhoneId,
+    List<PairedPhone>? phones,
     bool? forgetUnsaved,
+    bool? forgetFailed,
     bool? launchAtLogin,
     int? packetCount,
     String? Function()? error,
@@ -56,8 +65,12 @@ class AgentState extends Equatable {
       connectedPhone: connectedPhone == null
           ? this.connectedPhone
           : connectedPhone(),
-      pairedPhones: pairedPhones ?? this.pairedPhones,
+      connectedPhoneId: connectedPhoneId == null
+          ? this.connectedPhoneId
+          : connectedPhoneId(),
+      phones: phones ?? this.phones,
       forgetUnsaved: forgetUnsaved ?? this.forgetUnsaved,
+      forgetFailed: forgetFailed ?? this.forgetFailed,
       launchAtLogin: launchAtLogin ?? this.launchAtLogin,
       packetCount: packetCount ?? this.packetCount,
       error: error == null ? this.error : error(),
@@ -74,8 +87,10 @@ class AgentState extends Equatable {
     listening,
     pairingCode,
     connectedPhone,
-    pairedPhones,
+    connectedPhoneId,
+    phones,
     forgetUnsaved,
+    forgetFailed,
     launchAtLogin,
     packetCount,
     error,

@@ -28,8 +28,12 @@ Future<void> main() async {
     final certificate = await CertificateStore.load(_hostName());
     final server = AgentServer(
       certificate: certificate,
-      guard: PairingGuard(trustedClients: await TrustStore.load()),
+      guard: PairingGuard(
+        trustedClients: await TrustStore.load(),
+        history: await TrustStore.loadHistory(),
+      ),
       rememberClients: TrustStore.remember,
+      rememberHistory: TrustStore.rememberHistory,
     );
     final injector = Platform.isWindows
         ? WindowsInjector.open()
