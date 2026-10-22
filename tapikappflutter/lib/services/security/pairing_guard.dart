@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import '../../core/protocol/packet.dart';
+import 'paired_phone.dart';
 
 enum PairingOutcome { pending, retry, accepted, rejected, expired }
 
@@ -36,12 +37,17 @@ class _PeerPenalty {
 class PairingGuard {
   PairingGuard({
     required Set<String> trustedClients,
+    Iterable<PairedPhone> history = const [],
     this.handshakeTimeout = defaultHandshakeTimeout,
     this.codeLifetime = defaultCodeLifetime,
     this.maxAttempts = defaultMaxAttempts,
     Random? random,
     DateTime Function()? clock,
   }) : _trusted = Set<String>.of(trustedClients),
+       _history = {
+         for (final phone in history)
+           if (trustedClients.contains(phone.id)) phone.id: phone,
+       },
        _random = random ?? Random.secure(),
        _now = clock ?? DateTime.now;
 
@@ -59,6 +65,7 @@ class PairingGuard {
   final int maxAttempts;
 
   final Set<String> _trusted;
+  final Map<String, PairedPhone> _history;
   final Random _random;
   final DateTime Function() _now;
   final Map<String, _PeerPenalty> _penalties = <String, _PeerPenalty>{};
@@ -75,6 +82,29 @@ class PairingGuard {
   bool get isAccepted => _accepted;
 
   Set<String> get trustedClients => Set<String>.unmodifiable(_trusted);
+
+  String? get acceptedClient => _accepted ? _clientId : null;
+
+  List<PairedPhone> get pairedPhones {
+    final phones = [
+      for (final id in _trusted) _history[id] ?? PairedPhone(id: id),
+    ]..sort(_newestFirst);
+    return List<PairedPhone>.unmodifiable(phones);
+  }
+
+  static int _newestFirst(PairedPhone a, PairedPhone b) {
+    final paired = _latestFirst(a.pairedAt, b.pairedAt);
+    if (paired != 0) return paired;
+    final seen = _latestFirst(a.lastSeenAt, b.lastSeenAt);
+    return seen != 0 ? seen : a.id.compareTo(b.id);
+  }
+
+  static int _latestFirst(DateTime? a, DateTime? b) {
+    if (a == null || b == null) {
+      return (a == null ? 1 : 0) - (b == null ? 1 : 0);
+    }
+    return b.compareTo(a);
+  }
 
   Duration? get blockedFor => blockedForPeer(_peer);
 
@@ -96,6 +126,10 @@ class PairingGuard {
   }
 
   void close() {
+    final client = _clientId;
+    if (_accepted && client != null && _trusted.contains(client)) {
+      _seen(client);
+    }
     _clientId = null;
     _openedAt = null;
     _code = null;
@@ -137,9 +171,10 @@ class PairingGuard {
       return _reject('That phone did not identify itself.');
     }
     _clientId = clientId;
-    final forgot = introduce && _trusted.remove(clientId) ? clientId : null;
+    final forgot = introduce && _forget(clientId) != null ? clientId : null;
     if (!introduce && _trusted.contains(clientId)) {
       _accepted = true;
+      _seen(clientId);
       return PairingDecision(
         outcome: PairingOutcome.accepted,
         reply: const PairPacket(PairStage.accepted),
@@ -164,13 +199,31 @@ class PairingGuard {
   String? forgetCurrentClient() {
     final client = _clientId;
     if (!_accepted || client == null) return null;
-    return _trusted.remove(client) ? client : null;
+    return _forget(client) != null ? client : null;
+  }
+
+  PairedPhone? forgetClient(String clientId) => _forget(clientId);
+
+  void restore(PairedPhone phone) {
+    if (!_trusted.add(phone.id)) return;
+    _history[phone.id] = phone;
   }
 
   int forgetAllClients() {
     final forgotten = _trusted.length;
     _trusted.clear();
+    _history.clear();
     return forgotten;
+  }
+
+  PairedPhone? _forget(String clientId) {
+    if (!_trusted.remove(clientId)) return null;
+    return _history.remove(clientId) ?? PairedPhone(id: clientId);
+  }
+
+  void _seen(String clientId) {
+    final known = _history[clientId] ?? PairedPhone(id: clientId);
+    _history[clientId] = known.seenAt(_now());
   }
 
   PairingDecision _onCode(String entered) {
@@ -215,7 +268,15 @@ class PairingGuard {
     _code = null;
     _codeExpiry = null;
     final paired = _clientId;
-    if (paired != null) _trusted.add(paired);
+    if (paired != null) {
+      final now = _now();
+      _trusted.add(paired);
+      _history[paired] = PairedPhone(
+        id: paired,
+        pairedAt: now,
+        lastSeenAt: now,
+      );
+    }
     return PairingDecision(
       outcome: PairingOutcome.accepted,
       reply: const PairPacket(PairStage.accepted),

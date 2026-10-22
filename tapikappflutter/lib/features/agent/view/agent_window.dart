@@ -11,8 +11,10 @@ import '../../../core/widgets/logo_mark.dart';
 import '../../../core/widgets/settings_group.dart';
 import '../../../core/widgets/status_pill.dart';
 import '../../../services/injector/injector.dart';
+import '../../../services/security/paired_phone.dart';
 import '../view_model/agent_cubit.dart';
 import '../view_model/agent_state.dart';
+import '../view_model/paired_phone_label.dart';
 
 class AgentWindow extends StatelessWidget {
   const AgentWindow({super.key});
@@ -25,10 +27,14 @@ class AgentWindow extends StatelessWidget {
       'Open Tapikapp on your phone and pick this laptop.';
   static const String connectedHint = 'Connected over Wi-Fi';
   static const String forgetHint =
-      'A forgotten phone has to type a pairing code to connect again.';
+      'Forget removes one phone; it needs the pairing code next time. '
+      'Forget all phones removes every phone at once.';
   static const String forgetUnsavedHint =
       'Tapikapp couldn’t save that, so the phones would be trusted again '
       'after a restart. Press Forget all phones to try again.';
+  static const String forgetFailedHint =
+      'Tapikapp couldn’t save that, so the phone is still paired. '
+      'Press Forget to try again.';
 
   static Future<void> _confirmForgetAll(
     BuildContext context,
@@ -40,6 +46,22 @@ class AgentWindow extends StatelessWidget {
           BlocProvider.value(value: cubit, child: const _ForgetAllDialog()),
     );
     if (confirmed == true) await cubit.forgetAllPhones();
+  }
+
+  static Future<void> _confirmForget(
+    BuildContext context,
+    AgentCubit cubit,
+    PairedPhone phone,
+    String title,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => BlocProvider.value(
+        value: cubit,
+        child: _ForgetPhoneDialog(phoneId: phone.id, phoneTitle: title),
+      ),
+    );
+    if (confirmed == true) await cubit.forgetPhone(phone.id);
   }
 
   static String _accessTitle(InjectorPermission permission) {
@@ -134,16 +156,21 @@ class AgentWindow extends StatelessWidget {
                             height: AppSpacing.xs + AppSpacing.x3s,
                           ),
                           _PairedPhonesCard(
-                            count: state.pairedPhones,
+                            phones: state.phones,
+                            connectedId: state.connectedPhoneId,
+                            onForget: (phone, title) =>
+                                _confirmForget(context, cubit, phone, title),
                             onForgetAll:
                                 state.pairedPhones > 0 || state.forgetUnsaved
                                 ? () => _confirmForgetAll(context, cubit)
                                 : null,
                           ),
-                          if (state.forgetUnsaved) ...[
+                          if (state.forgetUnsaved || state.forgetFailed) ...[
                             const SizedBox(height: AppSpacing.xs),
                             Text(
-                              AgentWindow.forgetUnsavedHint,
+                              state.forgetUnsaved
+                                  ? AgentWindow.forgetUnsavedHint
+                                  : AgentWindow.forgetFailedHint,
                               style: AppTextStyles.caption.copyWith(
                                 color: colors.textDanger,
                               ),
@@ -370,29 +397,46 @@ class _LaptopIdCard extends StatelessWidget {
 }
 
 class _PairedPhonesCard extends StatelessWidget {
-  const _PairedPhonesCard({required this.count, required this.onForgetAll});
+  const _PairedPhonesCard({
+    required this.phones,
+    required this.connectedId,
+    required this.onForget,
+    required this.onForgetAll,
+  });
 
   static const String forgetAll = 'Forget all phones';
 
-  final int count;
+  final List<PairedPhone> phones;
+  final String? connectedId;
+  final void Function(PairedPhone phone, String title) onForget;
   final VoidCallback? onForgetAll;
 
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final titles = PairedPhoneLabel.titles(phones, now);
     return SettingsGroup(
       children: [
-        SettingRow(
-          title: switch (count) {
-            0 => 'No phones paired yet',
-            1 => '1 phone paired',
-            _ => '$count phones paired',
-          },
-          subtitle: switch (count) {
-            0 => 'A phone is added once its pairing code is typed.',
-            1 => 'It connects without typing a code.',
-            _ => 'They connect without typing a code.',
-          },
-        ),
+        if (phones.isEmpty)
+          const SettingRow(
+            title: 'No phones paired yet',
+            subtitle: 'A phone is added once its pairing code is typed.',
+          ),
+        for (final phone in phones)
+          SettingRow(
+            leading: _PhoneBadge(connected: phone.id == connectedId),
+            title: titles[phone.id]!,
+            subtitle: PairedPhoneLabel.status(
+              phone,
+              connected: phone.id == connectedId,
+              now: now,
+            ),
+            trailing: AppDangerButton(
+              label: 'Forget',
+              compact: true,
+              onPressed: () => onForget(phone, titles[phone.id]!),
+            ),
+          ),
         Padding(
           padding: SettingRow.padding,
           child: AppDangerButton(label: forgetAll, onPressed: onForgetAll),
@@ -405,14 +449,60 @@ class _PairedPhonesCard extends StatelessWidget {
 class _ForgetAllDialog extends StatelessWidget {
   const _ForgetAllDialog();
 
+  @override
+  Widget build(BuildContext context) {
+    final disconnects = context.select<AgentCubit, bool>(
+      (cubit) => cubit.state.hasConnection,
+    );
+    return _ForgetDialog(
+      title: 'Forget all phones?',
+      message: disconnects
+          ? 'Every phone will need a pairing code to connect again. '
+                'The phone that’s connected now will be disconnected.'
+          : 'Every phone will need a pairing code to connect again.',
+      confirmLabel: 'Forget all',
+    );
+  }
+}
+
+class _ForgetPhoneDialog extends StatelessWidget {
+  const _ForgetPhoneDialog({required this.phoneId, required this.phoneTitle});
+
+  final String phoneId;
+  final String phoneTitle;
+
+  @override
+  Widget build(BuildContext context) {
+    final disconnects = context.select<AgentCubit, bool>(
+      (cubit) => cubit.state.connectedPhoneId == phoneId,
+    );
+    return _ForgetDialog(
+      title: 'Forget this phone?',
+      message: disconnects
+          ? '$phoneTitle will need a pairing code to connect again. '
+                'It’s connected now, so it disconnects straight away.'
+          : '$phoneTitle will need a pairing code to connect again.',
+      confirmLabel: 'Forget',
+    );
+  }
+}
+
+class _ForgetDialog extends StatelessWidget {
+  const _ForgetDialog({
+    required this.title,
+    required this.message,
+    required this.confirmLabel,
+  });
+
   static const double width = 340;
+
+  final String title;
+  final String message;
+  final String confirmLabel;
 
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
-    final disconnects = context.select<AgentCubit, bool>(
-      (cubit) => cubit.state.hasConnection,
-    );
     return Dialog(
       backgroundColor: colors.elevated,
       surfaceTintColor: Colors.transparent,
@@ -430,17 +520,14 @@ class _ForgetAllDialog extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'Forget all phones?',
+                title,
                 style: AppTextStyles.headingM.copyWith(
                   color: colors.textPrimary,
                 ),
               ),
               const SizedBox(height: AppSpacing.md),
               Text(
-                disconnects
-                    ? 'Every phone will need a pairing code to connect again. '
-                          'The phone that’s connected now will be disconnected.'
-                    : 'Every phone will need a pairing code to connect again.',
+                message,
                 style: AppTextStyles.bodyS.copyWith(
                   color: colors.textSecondary,
                 ),
@@ -457,7 +544,7 @@ class _ForgetAllDialog extends StatelessWidget {
                   const SizedBox(width: AppSpacing.xs),
                   Expanded(
                     child: AppDangerButton(
-                      label: 'Forget all',
+                      label: confirmLabel,
                       onPressed: () => Navigator.of(context).pop(true),
                     ),
                   ),
@@ -471,15 +558,40 @@ class _ForgetAllDialog extends StatelessWidget {
   }
 }
 
+class _PhoneBadge extends StatelessWidget {
+  const _PhoneBadge({required this.connected});
+
+  static const double size = AppSpacing.x4l;
+  static const double glyphSize = AppSpacing.xl;
+
+  final bool connected;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.surfaceAlt,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: SizedBox.square(
+        dimension: size,
+        child: Icon(
+          Icons.smartphone_rounded,
+          size: glyphSize,
+          color: connected ? colors.textSuccess : colors.textSecondary,
+        ),
+      ),
+    );
+  }
+}
+
 class _PhoneCard extends StatelessWidget {
   const _PhoneCard({
     required this.phoneName,
     required this.packetCount,
     required this.onDisconnect,
   });
-
-  static const double badgeSize = AppSpacing.x4l;
-  static const double glyphSize = AppSpacing.xl;
 
   final String? phoneName;
   final int packetCount;
@@ -497,25 +609,11 @@ class _PhoneCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = AppColors.of(context);
     final connected = phoneName != null;
     return SettingsGroup(
       children: [
         SettingRow(
-          leading: DecoratedBox(
-            decoration: BoxDecoration(
-              color: colors.surfaceAlt,
-              borderRadius: BorderRadius.circular(AppRadius.md),
-            ),
-            child: SizedBox.square(
-              dimension: badgeSize,
-              child: Icon(
-                Icons.smartphone_rounded,
-                size: glyphSize,
-                color: connected ? colors.textSuccess : colors.textSecondary,
-              ),
-            ),
-          ),
+          leading: _PhoneBadge(connected: connected),
           title: phoneName ?? AgentWindow.noPhoneTitle,
           subtitle: connected
               ? '${AgentWindow.connectedHint} · '

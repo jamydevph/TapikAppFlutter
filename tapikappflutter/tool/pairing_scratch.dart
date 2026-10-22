@@ -3,6 +3,8 @@ import 'dart:math';
 
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
+import 'package:tapikappflutter/features/agent/view_model/paired_phone_label.dart';
+import 'package:tapikappflutter/services/security/paired_phone.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
 
 var _passed = 0;
@@ -17,13 +19,23 @@ void _check(String label, Object? actual, Object? expected) {
 
 DateTime _at = DateTime(2026, 1, 1, 12);
 
-PairingGuard _guard({Set<String> trusted = const {}}) {
+PairingGuard _guard({
+  Set<String> trusted = const {},
+  List<PairedPhone> history = const [],
+}) {
   _at = DateTime(2026, 1, 1, 12);
   return PairingGuard(
     trustedClients: trusted,
+    history: history,
     random: Random(7),
     clock: () => _at,
   );
+}
+
+void _pair(PairingGuard guard, String phone) {
+  guard.open();
+  guard.onPacket(PairPacket(PairStage.hello, phone));
+  guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
 }
 
 void main() {
@@ -248,6 +260,221 @@ void main() {
     'forgetting twice forgets nothing more',
     guard.forgetCurrentClient(),
     null,
+  );
+
+  stdout.writeln('');
+  stdout.writeln(
+    'the laptop remembers when each phone paired and last connected',
+  );
+  guard = _guard();
+  final pairedAt = _at;
+  _pair(guard, 'phone-a');
+  _check(
+    'a new pairing records the time it paired and was seen',
+    guard.pairedPhones.single ==
+        PairedPhone(id: 'phone-a', pairedAt: pairedAt, lastSeenAt: pairedAt),
+    true,
+  );
+  _check('and says which phone is connected', guard.acceptedClient, 'phone-a');
+  _at = _at.add(const Duration(hours: 1));
+  guard.close();
+  _check(
+    'disconnecting updates when it was last seen, not when it paired',
+    [
+      guard.pairedPhones.single.pairedAt == pairedAt,
+      guard.pairedPhones.single.lastSeenAt == _at,
+      guard.acceptedClient,
+    ],
+    [true, true, null],
+  );
+  _at = _at.add(const Duration(hours: 1));
+  guard.open();
+  guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  _check(
+    'reconnecting with no code counts as seen as well',
+    guard.pairedPhones.single.lastSeenAt == _at,
+    true,
+  );
+  guard.close();
+  _at = _at.add(const Duration(hours: 1));
+  _pair(guard, 'phone-b');
+  guard.close();
+  _check(
+    'the newest pairing is listed first',
+    guard.pairedPhones.map((phone) => phone.id).join(','),
+    'phone-b,phone-a',
+  );
+
+  guard = _guard(
+    trusted: {'old-phone', 'dated-phone'},
+    history: [
+      PairedPhone(id: 'dated-phone', pairedAt: DateTime(2025, 12, 1)),
+      PairedPhone(id: 'forgotten-phone', pairedAt: DateTime(2025, 12, 2)),
+    ],
+  );
+  _check(
+    'a phone paired before dates were kept is listed last, with no dates',
+    [
+      guard.pairedPhones.map((phone) => phone.id).join(','),
+      guard.pairedPhones.last == const PairedPhone(id: 'old-phone'),
+    ],
+    ['dated-phone,old-phone', true],
+  );
+  _check(
+    'dates for a phone that is no longer trusted are dropped',
+    guard.pairedPhones.any((phone) => phone.id == 'forgotten-phone'),
+    false,
+  );
+  final removed = guard.forgetClient('dated-phone');
+  _check(
+    'one phone can be forgotten by its id, keeping the others',
+    [
+      removed ==
+          PairedPhone(id: 'dated-phone', pairedAt: DateTime(2025, 12, 1)),
+      guard.trustedClients.join(','),
+    ],
+    [true, 'old-phone'],
+  );
+  _check(
+    'forgetting it twice does nothing',
+    guard.forgetClient('dated-phone'),
+    null,
+  );
+  guard.restore(removed!);
+  _check(
+    'a phone whose forget could not be saved can be put back, dates and all',
+    guard.pairedPhones.first == removed,
+    true,
+  );
+  guard.restore(PairedPhone(id: 'dated-phone', pairedAt: DateTime(2020)));
+  _check(
+    'putting back a phone that is already trusted keeps its current dates',
+    guard.pairedPhones.first == removed,
+    true,
+  );
+  guard.open();
+  guard.onPacket(const PairPacket(PairStage.introduce, 'dated-phone'));
+  _check(
+    'a phone pairing again from scratch loses its old dates',
+    guard.pairedPhones.any((phone) => phone.id == 'dated-phone'),
+    false,
+  );
+  guard.forgetAllClients();
+  _check('forgetting all phones clears every date', guard.pairedPhones, []);
+
+  const dated = PairedPhone(id: 'x');
+  final full = PairedPhone(
+    id: 'phone-a',
+    pairedAt: DateTime(2026, 10, 21, 21, 2),
+    lastSeenAt: DateTime(2026, 10, 22, 8),
+  );
+  _check(
+    'saved dates come back the same',
+    [
+      PairedPhone.fromJson(full.toJson()) == full,
+      PairedPhone.fromJson(dated.toJson()) == dated,
+    ],
+    [true, true],
+  );
+  _check(
+    'a broken saved entry is skipped rather than trusted',
+    [
+      PairedPhone.fromJson('nope'),
+      PairedPhone.fromJson({'id': ''}),
+      PairedPhone.fromJson({'paired': 1}),
+    ],
+    [null, null, null],
+  );
+  _check(
+    'an impossible saved date is dropped instead of crashing the agent',
+    [
+      PairedPhone.fromJson({'id': 'phone-a', 'paired': 1 << 62}) ==
+          const PairedPhone(id: 'phone-a'),
+      PairedPhone.fromJson({'id': 'phone-a', 'seen': -1 << 63}) ==
+          const PairedPhone(id: 'phone-a'),
+    ],
+    [true, true],
+  );
+
+  stdout.writeln('');
+  stdout.writeln('each row on the laptop says which phone it is');
+  final now = DateTime(2026, 10, 22, 15);
+  final rows = [
+    PairedPhone(id: 'a', pairedAt: DateTime(2026, 10, 21, 21, 2)),
+    PairedPhone(id: 'b', pairedAt: DateTime(2026, 10, 3, 9)),
+    PairedPhone(id: 'c', pairedAt: DateTime(2026, 10, 3, 18, 30)),
+    PairedPhone(id: 'd', pairedAt: DateTime(2025, 12, 1)),
+    const PairedPhone(id: 'e'),
+    const PairedPhone(id: 'f'),
+  ];
+  final titles = PairedPhoneLabel.titles(rows, now);
+  _check(
+    'a phone is named by the day it paired',
+    titles['a'],
+    'Phone paired 21 Oct',
+  );
+  _check(
+    'two phones paired the same day also show the time',
+    [titles['b'], titles['c']],
+    ['Phone paired 3 Oct, 9:00 AM', 'Phone paired 3 Oct, 6:30 PM'],
+  );
+  _check(
+    'a pairing from another year shows the year',
+    titles['d'],
+    'Phone paired 1 Dec 2025',
+  );
+  _check(
+    'phones paired before this update are told apart by number',
+    [titles['e'], titles['f']],
+    ['Phone paired earlier', 'Phone paired earlier (2)'],
+  );
+  final reordered = PairedPhoneLabel.titles(rows.reversed.toList(), now);
+  _check(
+    'and keep their numbers when the list order changes',
+    [reordered['e'], reordered['f'], reordered['b']],
+    [titles['e'], titles['f'], titles['b']],
+  );
+  String seen(Duration ago) => PairedPhoneLabel.status(
+    PairedPhone(id: 'x', lastSeenAt: now.subtract(ago)),
+    connected: false,
+    now: now,
+  );
+  _check(
+    'the connected phone says so',
+    PairedPhoneLabel.status(rows.first, connected: true, now: now),
+    'Connected now',
+  );
+  _check(
+    'the others say when they were last connected',
+    [
+      seen(const Duration(seconds: 20)),
+      seen(const Duration(minutes: 5)),
+      seen(const Duration(minutes: 70)),
+      seen(const Duration(hours: 5)),
+      seen(const Duration(hours: 20)),
+      seen(const Duration(hours: 30)),
+      seen(const Duration(days: 3)),
+      seen(const Duration(days: 21)),
+    ],
+    [
+      'Last connected just now',
+      'Last connected 5 min ago',
+      'Last connected 1 hour ago',
+      'Last connected 5 hours ago',
+      'Last connected 20 hours ago',
+      'Last connected yesterday',
+      'Last connected 3 days ago',
+      'Last connected on 1 Oct',
+    ],
+  );
+  _check(
+    'a phone not seen since this update says that instead',
+    PairedPhoneLabel.status(
+      const PairedPhone(id: 'e'),
+      connected: false,
+      now: now,
+    ),
+    'Not connected since this update',
   );
 
   stdout.writeln('');

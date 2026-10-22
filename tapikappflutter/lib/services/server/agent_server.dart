@@ -12,6 +12,7 @@ import '../../core/protocol/packet_buffer.dart';
 import '../../core/resources/constants.dart';
 import '../security/agent_certificate.dart';
 import '../security/datagram_seal.dart';
+import '../security/paired_phone.dart';
 import '../security/pairing_guard.dart';
 
 class AgentServerState extends Equatable {
@@ -19,7 +20,8 @@ class AgentServerState extends Equatable {
     this.listening = false,
     this.client,
     this.pairingCode,
-    this.pairedPhones = 0,
+    this.phones = const [],
+    this.phoneId,
     this.forgetUnsaved = false,
   });
 
@@ -28,22 +30,27 @@ class AgentServerState extends Equatable {
   final bool listening;
   final String? client;
   final String? pairingCode;
-  final int pairedPhones;
+  final List<PairedPhone> phones;
+  final String? phoneId;
   final bool forgetUnsaved;
 
   bool get hasClient => client != null;
 
   bool get isPairing => pairingCode != null;
 
+  int get pairedPhones => phones.length;
+
   AgentServerState withTrust({
-    required int pairedPhones,
+    required List<PairedPhone> phones,
+    required String? phoneId,
     required bool forgetUnsaved,
   }) {
     return AgentServerState(
       listening: listening,
       client: client,
       pairingCode: pairingCode,
-      pairedPhones: pairedPhones,
+      phones: phones,
+      phoneId: phoneId,
       forgetUnsaved: forgetUnsaved,
     );
   }
@@ -53,7 +60,8 @@ class AgentServerState extends Equatable {
     listening,
     client,
     pairingCode,
-    pairedPhones,
+    phones,
+    phoneId,
     forgetUnsaved,
   ];
 }
@@ -63,6 +71,7 @@ class AgentServer {
     required this.certificate,
     required this.guard,
     this.rememberClients,
+    this.rememberHistory,
     this.peerTimeout = defaultPeerTimeout,
     this.tcpPort = TapikappConstants.tcpPort,
     this.udpPort = TapikappConstants.udpPort,
@@ -71,6 +80,7 @@ class AgentServer {
   final AgentCertificate certificate;
   final PairingGuard guard;
   final Future<void> Function(Set<String>)? rememberClients;
+  final Future<void> Function(List<PairedPhone>)? rememberHistory;
   final Duration peerTimeout;
   final int tcpPort;
   final int udpPort;
@@ -100,6 +110,9 @@ class AgentServer {
   Socket? _client;
   DatagramSeal? _seal;
   bool _forgetUnsaved = false;
+  int _trustEpoch = 0;
+  int _savedEpoch = 0;
+  int _unsavedEpoch = 0;
   int _packetCount = 0;
   int _generation = 0;
   bool _disposed = false;
@@ -113,6 +126,8 @@ class AgentServer {
   int get packetCount => _packetCount;
 
   int get pairedPhones => guard.trustedClients.length;
+
+  List<PairedPhone> get phones => guard.pairedPhones;
 
   SecurityContext _securityContext() {
     return SecurityContext(withTrustedRoots: false)
@@ -188,17 +203,59 @@ class AgentServer {
 
   Future<void> forgetAllPhones() async {
     guard.forgetAllClients();
+    _trustEpoch += 1;
     if (guard.isAccepted) await disconnectClient();
     final remember = rememberClients;
+    final savingAt = _trustEpoch;
     try {
       if (remember != null) await remember(guard.trustedClients);
-      _forgetUnsaved = false;
+      _savedAt(savingAt);
+      _persistHistory();
     } catch (_) {
-      _forgetUnsaved = true;
+      _unsavedAt(savingAt);
       rethrow;
     } finally {
       _emit(_state);
     }
+  }
+
+  Future<void> forgetPhone(String phoneId) async {
+    final connected = guard.acceptedClient == phoneId;
+    final forgotten = guard.forgetClient(phoneId);
+    if (forgotten == null) return;
+    final forgotAt = ++_trustEpoch;
+    if (connected) {
+      await disconnectClient();
+    } else {
+      _emit(_state);
+    }
+    final remember = rememberClients;
+    final savingAt = _trustEpoch;
+    try {
+      if (remember != null) await remember(guard.trustedClients);
+      _savedAt(savingAt);
+    } catch (_) {
+      if (forgotAt == _trustEpoch) {
+        guard.restore(forgotten);
+      } else {
+        _unsavedAt(savingAt);
+      }
+      rethrow;
+    } finally {
+      _persistHistory();
+      _emit(_state);
+    }
+  }
+
+  void _savedAt(int epoch) {
+    if (epoch > _savedEpoch) _savedEpoch = epoch;
+    if (_savedEpoch >= _unsavedEpoch) _forgetUnsaved = false;
+  }
+
+  void _unsavedAt(int epoch) {
+    if (_savedEpoch >= epoch) return;
+    _forgetUnsaved = true;
+    if (epoch > _unsavedEpoch) _unsavedEpoch = epoch;
   }
 
   Future<void> dispose() async {
@@ -286,7 +343,11 @@ class AgentServer {
       final decision = guard.onPacket(packet);
       final reply = decision.reply;
       if (reply != null) _reply(_withSessionKey(reply));
-      if (decision.changesTrust) _persistTrust();
+      if (decision.changesTrust) {
+        _persistTrust();
+      } else if (decision.isAccepted) {
+        _persistHistory();
+      }
       if (decision.shouldDrop) {
         unawaited(disconnectClient());
         return;
@@ -321,15 +382,23 @@ class AgentServer {
   }
 
   void _persistTrust() {
+    final savingAt = ++_trustEpoch;
+    _persistHistory();
     final remember = rememberClients;
     if (remember == null) return;
     unawaited(
       remember(guard.trustedClients).then((_) {
-        if (!_forgetUnsaved) return;
-        _forgetUnsaved = false;
-        _emit(_state);
+        final wasUnsaved = _forgetUnsaved;
+        _savedAt(savingAt);
+        if (wasUnsaved && !_forgetUnsaved) _emit(_state);
       }, onError: (Object _) {}),
     );
+  }
+
+  void _persistHistory() {
+    final remember = rememberHistory;
+    if (remember == null) return;
+    unawaited(remember(guard.pairedPhones).catchError((Object _) {}));
   }
 
   void _reply(PairPacket packet) {
@@ -343,7 +412,9 @@ class AgentServer {
   Future<void> _dropClient() async {
     _handshake?.cancel();
     _handshake = null;
+    final wasAccepted = guard.isAccepted;
     guard.close();
+    if (wasAccepted) _persistHistory();
     final reader = _reader;
     final client = _client;
     _reader = null;
@@ -359,7 +430,8 @@ class AgentServer {
 
   void _emit(AgentServerState next) {
     final stamped = next.withTrust(
-      pairedPhones: guard.trustedClients.length,
+      phones: guard.pairedPhones,
+      phoneId: guard.acceptedClient,
       forgetUnsaved: _forgetUnsaved,
     );
     if (_state == stamped || _states.isClosed) return;
