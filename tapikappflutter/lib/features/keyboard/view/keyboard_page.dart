@@ -143,6 +143,20 @@ class _KeyboardViewState extends State<_KeyboardView> {
                             ),
                         ],
                       ),
+                      const SizedBox(height: AppSpacing.sm),
+                      _ShortcutRow(
+                        children: [
+                          for (final shortcut in _ShortcutKey.values)
+                            KeyCap(
+                              label: shortcut.label(mac: state.macHost),
+                              icon: Icon(shortcut.icon),
+                              type: KeyCapType.modifier,
+                              onTap: connected
+                                  ? () => cubit.tapShortcut(shortcut.shortcut)
+                                  : null,
+                            ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -276,6 +290,31 @@ enum _MediaKey {
   final String label;
   final IconData icon;
   final int usage;
+}
+
+enum _ShortcutKey {
+  cut(KeyboardShortcut.cut, 'Cut', Icons.content_cut_rounded),
+  copy(KeyboardShortcut.copy, 'Copy', Icons.content_copy_rounded),
+  paste(KeyboardShortcut.paste, 'Paste', Icons.content_paste_rounded),
+  undo(KeyboardShortcut.undo, 'Undo', Icons.undo_rounded),
+  switchApp(KeyboardShortcut.switchApp, 'Switch app', Icons.swap_horiz_rounded);
+
+  const _ShortcutKey(this.shortcut, this.title, this.icon);
+
+  final KeyboardShortcut shortcut;
+  final String title;
+  final IconData icon;
+
+  String label({required bool mac}) {
+    final combo = switch (this) {
+      _ShortcutKey.cut => mac ? 'Command X' : 'Control X',
+      _ShortcutKey.copy => mac ? 'Command C' : 'Control C',
+      _ShortcutKey.paste => mac ? 'Command V' : 'Control V',
+      _ShortcutKey.undo => mac ? 'Command Z' : 'Control Z',
+      _ShortcutKey.switchApp => mac ? 'Command Tab' : 'Alt Tab',
+    };
+    return '$title, $combo';
+  }
 }
 
 class _ModifierGlyph extends StatelessWidget {

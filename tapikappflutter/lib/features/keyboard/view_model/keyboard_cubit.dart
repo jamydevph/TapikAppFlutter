@@ -33,13 +33,7 @@ class KeyboardCubit extends Cubit<KeyboardState> {
 
   void tapKey(int usage) {
     if (state.connection != KeyboardConnection.connected) return;
-    final modifiers = _mask();
-    _transport.send(
-      KeyPacket(keyCode: usage, modifiers: modifiers, down: true),
-    );
-    _transport.send(
-      KeyPacket(keyCode: usage, modifiers: modifiers, down: false),
-    );
+    _tap(usage, _mask());
   }
 
   void tapLetter(String character) {
@@ -51,6 +45,45 @@ class KeyboardCubit extends Cubit<KeyboardState> {
   void tapMedia(int usage) {
     if (state.connection != KeyboardConnection.connected) return;
     _transport.send(MediaPacket(usage));
+  }
+
+  void tapShortcut(KeyboardShortcut shortcut) {
+    if (state.connection != KeyboardConnection.connected) return;
+    final platform = _transport.endpoint?.platform;
+    final primary = Keycodes.primaryModifier(platform);
+    switch (shortcut) {
+      case KeyboardShortcut.cut:
+        _tap(Keycodes.letter('X')!, primary);
+      case KeyboardShortcut.copy:
+        _tap(Keycodes.letter('C')!, primary);
+      case KeyboardShortcut.paste:
+        _tap(Keycodes.letter('V')!, primary);
+      case KeyboardShortcut.undo:
+        _tap(Keycodes.letter('Z')!, primary);
+      case KeyboardShortcut.switchApp:
+        _switchApp(platform);
+    }
+  }
+
+  // The app switcher only settles when the real modifier key is let go, so
+  // hold it around the Tab instead of only flagging the Tab.
+  void _switchApp(String? platform) {
+    final hold = Keycodes.appSwitchKey(platform);
+    final modifiers = Keycodes.appSwitchModifier(platform);
+    _transport.send(KeyPacket(keyCode: hold, modifiers: modifiers, down: true));
+    _tap(Keycodes.usageTab, modifiers);
+    _transport.send(
+      KeyPacket(keyCode: hold, modifiers: KeyModifiers.none, down: false),
+    );
+  }
+
+  void _tap(int usage, KeyModifiers modifiers) {
+    _transport.send(
+      KeyPacket(keyCode: usage, modifiers: modifiers, down: true),
+    );
+    _transport.send(
+      KeyPacket(keyCode: usage, modifiers: modifiers, down: false),
+    );
   }
 
   void sendText(String text) {
@@ -82,6 +115,9 @@ class KeyboardCubit extends Cubit<KeyboardState> {
         },
         deviceName: () => endpoint?.label ?? endpoint?.host,
         heldModifiers: connected ? state.heldModifiers : const {},
+        macHost: endpoint == null
+            ? state.macHost
+            : Keycodes.isMac(endpoint.platform),
       ),
     );
   }

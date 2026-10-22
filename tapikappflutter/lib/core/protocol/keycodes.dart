@@ -232,11 +232,23 @@ class Keycodes {
     return usageA + (code - 0x61);
   }
 
+  static bool isMac(String? platform) =>
+      platform != null && platform.toLowerCase() == 'macos';
+
   static KeyModifiers primaryModifier(String? platform) {
-    return platform != null && platform.toLowerCase() == 'macos'
+    return isMac(platform)
         ? const KeyModifiers(command: true)
         : const KeyModifiers(control: true);
   }
+
+  static KeyModifiers appSwitchModifier(String? platform) {
+    return isMac(platform)
+        ? const KeyModifiers(command: true)
+        : const KeyModifiers(option: true);
+  }
+
+  static int appSwitchKey(String? platform) =>
+      isMac(platform) ? usageLeftCommand : usageLeftOption;
 
   static bool isModifier(int usage) =>
       usage >= usageLeftControl && usage <= usageRightGui;

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/keycodes.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
+import 'package:tapikappflutter/services/transport/hid_reports.dart';
 
 var _passed = 0;
 var _failed = 0;
@@ -34,6 +35,7 @@ void main() {
     'period': Keycodes.usagePeriod,
     'arrow right': Keycodes.usageArrowRight,
     'arrow left': Keycodes.usageArrowLeft,
+    'tab': Keycodes.usageTab,
   };
   for (final entry in uiKeys.entries) {
     _check('${entry.key} resolves', Keycodes.macos(entry.value) != null, true);
@@ -109,6 +111,88 @@ void main() {
   _check(
     'an unknown agent falls back to control',
     Keycodes.primaryModifier(null).control,
+    true,
+  );
+
+  stdout.writeln('');
+  stdout.writeln('the shortcut row sends the right combo for each laptop');
+  _check('macOS counts as a Mac', Keycodes.isMac('macOS'), true);
+  _check('Windows does not', Keycodes.isMac('windows'), false);
+  _check('an unknown laptop does not', Keycodes.isMac(null), false);
+  _check(
+    'switch app holds the real command key on a Mac',
+    Keycodes.appSwitchKey('macOS'),
+    Keycodes.usageLeftCommand,
+  );
+  _check(
+    'and the real alt key on Windows',
+    Keycodes.appSwitchKey('windows'),
+    Keycodes.usageLeftOption,
+  );
+  const command = KeyModifiers(command: true);
+  final hold = Keycodes.appSwitchKey('macOS');
+  final hid = HidReports();
+  final switchReports = [
+    for (final step in [
+      KeyPacket(keyCode: hold, modifiers: command, down: true),
+      KeyPacket(keyCode: Keycodes.usageTab, modifiers: command, down: true),
+      KeyPacket(keyCode: Keycodes.usageTab, modifiers: command, down: false),
+      KeyPacket(keyCode: hold, modifiers: KeyModifiers.none, down: false),
+    ])
+      for (final report in hid.encode(step))
+        '${report.data[0]}/${report.data[2]}',
+  ];
+  _check(
+    'over Bluetooth, switch app presses command, adds tab, then lets go',
+    switchReports,
+    ['8/0', '8/43', '0/0', '0/0'],
+  );
+  _check(
+    'switch app is command+tab on a Mac',
+    Keycodes.appSwitchModifier('macos') == const KeyModifiers(command: true),
+    true,
+  );
+  _check(
+    'and alt+tab on Windows',
+    Keycodes.appSwitchModifier('windows') == const KeyModifiers(option: true),
+    true,
+  );
+  _check(
+    'an unknown laptop falls back to alt+tab',
+    Keycodes.appSwitchModifier(null) == const KeyModifiers(option: true),
+    true,
+  );
+  final shortcutKeys = [
+    for (final letter in ['X', 'C', 'V', 'Z']) Keycodes.letter(letter)!,
+    Keycodes.usageTab,
+  ];
+  _check(
+    'cut, copy, paste, undo and tab all reach a Mac',
+    shortcutKeys.every((usage) => Keycodes.macos(usage) != null),
+    true,
+  );
+  _check(
+    'and a Windows laptop',
+    shortcutKeys.every((usage) => Keycodes.windows(usage) != null),
+    true,
+  );
+  final copyOnWindows = PacketCodec.decodeOne(
+    PacketCodec.encode(
+      KeyPacket(
+        keyCode: Keycodes.letter('C')!,
+        modifiers: Keycodes.primaryModifier('windows'),
+        down: true,
+      ),
+    ),
+  );
+  _check(
+    'copy for Windows survives the wire as ctrl+c',
+    copyOnWindows ==
+        KeyPacket(
+          keyCode: Keycodes.letter('C')!,
+          modifiers: const KeyModifiers(control: true),
+          down: true,
+        ),
     true,
   );
 
