@@ -344,7 +344,7 @@ class AgentServer {
       final reply = decision.reply;
       if (reply != null) _reply(_withSessionKey(reply));
       if (decision.changesTrust) {
-        _persistTrust();
+        _persistTrust(forgot: decision.forgotClient != null);
       } else if (decision.isAccepted) {
         _persistHistory();
       }
@@ -377,21 +377,29 @@ class AgentServer {
   }
 
   void _forgetClient() {
-    if (guard.forgetCurrentClient() != null) _persistTrust();
+    if (guard.forgetCurrentClient() != null) _persistTrust(forgot: true);
     unawaited(disconnectClient());
   }
 
-  void _persistTrust() {
+  void _persistTrust({bool forgot = false}) {
     final savingAt = ++_trustEpoch;
     _persistHistory();
     final remember = rememberClients;
     if (remember == null) return;
     unawaited(
-      remember(guard.trustedClients).then((_) {
-        final wasUnsaved = _forgetUnsaved;
-        _savedAt(savingAt);
-        if (wasUnsaved && !_forgetUnsaved) _emit(_state);
-      }, onError: (Object _) {}),
+      remember(guard.trustedClients).then(
+        (_) {
+          final wasUnsaved = _forgetUnsaved;
+          _savedAt(savingAt);
+          if (wasUnsaved && !_forgetUnsaved) _emit(_state);
+        },
+        onError: (Object _) {
+          if (!forgot) return;
+          final wasUnsaved = _forgetUnsaved;
+          _unsavedAt(savingAt);
+          if (!wasUnsaved && _forgetUnsaved) _emit(_state);
+        },
+      ),
     );
   }
 

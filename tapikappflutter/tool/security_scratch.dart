@@ -681,6 +681,36 @@ ${mine.certificatePem.trim()}
   await back.dispose();
   await revoked.dispose();
 
+  final unsavedRevoke = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: const {_phone}),
+    rememberClients: (_) async => throw const DataFailure('disk full'),
+    tcpPort: revokePorts.$1,
+    udpPort: revokePorts.$2,
+  );
+  await unsavedRevoke.start();
+  final leavingAgain = NetworkTransport();
+  await leavingAgain.connect(pinned);
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'before a phone asks to be forgotten, nothing is flagged as unsaved',
+    [leavingAgain.state, unsavedRevoke.state.forgetUnsaved],
+    [TransportState.connected, false],
+  );
+  await leavingAgain.forget();
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'if saving a phone’s own forget fails, the window warns instead of '
+    'staying quiet',
+    [
+      unsavedRevoke.guard.trustedClients.contains(_phone),
+      unsavedRevoke.state.forgetUnsaved,
+    ],
+    [false, true],
+  );
+  await leavingAgain.dispose();
+  await unsavedRevoke.dispose();
+
   stdout.writeln('');
   stdout.writeln(
     'a phone that lost its pin pairs again instead of being locked out',
