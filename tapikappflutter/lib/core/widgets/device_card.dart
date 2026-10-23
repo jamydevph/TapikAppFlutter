@@ -120,7 +120,7 @@ class DeviceCard extends StatelessWidget {
         return CustomPaint(
           size: chevronSize,
           painter: _ChevronPainter(
-            color: colors.textTertiary,
+            color: colors.navInactive,
             strokeWidth: chevronStroke,
           ),
         );
