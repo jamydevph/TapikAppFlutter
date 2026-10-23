@@ -303,9 +303,14 @@ class ConnectCubit extends Cubit<ConnectState> {
   Future<void> _trustAgent(DiscoveredAgent agent) async {
     final fingerprint = _transport.peerFingerprint;
     if (fingerprint == null || fingerprint.isEmpty) return;
-    if (_revokedIds.contains(agent.id) && !_codeRequested) return;
+    final withCode = _codeRequested;
+    if (_revokedIds.contains(agent.id) && !withCode) return;
     _revokedIds.remove(agent.id);
     await FingerprintStore.remember(agent.id, fingerprint);
+    if (_revokedIds.contains(agent.id) && !withCode) {
+      await FingerprintStore.forget(agent.id);
+      return;
+    }
     final known = _registeredFingerprint(agent.id);
     try {
       if (known == fingerprint) {
