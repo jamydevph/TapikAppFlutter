@@ -33,7 +33,7 @@ class ConnectCubit extends Cubit<ConnectState> {
   StreamSubscription<void>? _codeRequests;
 
   List<DeviceModel> _trusted = const [];
-  bool _registryLoaded = false;
+  final Completer<void> _registryReady = Completer<void>();
   List<DiscoveredAgent> _agents = const [];
   DiscoveredAgent? _connectedAgent;
   DiscoveredAgent? _pairingAgent;
@@ -252,7 +252,7 @@ class ConnectCubit extends Cubit<ConnectState> {
   void _onRegistry(List<DeviceModel> registry) {
     final revoked = _revokedIn(registry)..remove(_pairingWithCodeId);
     _trusted = registry;
-    _registryLoaded = true;
+    if (!_registryReady.isCompleted) _registryReady.complete();
     _revokedIds
       ..addAll(revoked)
       ..removeAll({for (final device in registry) device.id});
@@ -311,6 +311,7 @@ class ConnectCubit extends Cubit<ConnectState> {
   Future<void> _trustAgent(DiscoveredAgent agent) async {
     final fingerprint = _transport.peerFingerprint;
     if (fingerprint == null || fingerprint.isEmpty) return;
+    final dial = _dials;
     final withCode = _codeRequested;
     if (_revokedIds.contains(agent.id) && !withCode) return;
     _revokedIds.remove(agent.id);
@@ -320,12 +321,19 @@ class ConnectCubit extends Cubit<ConnectState> {
     } finally {
       if (_codeTrustingId == agent.id) _codeTrustingId = null;
     }
+    if (!withCode && !_registryReady.isCompleted) await _registryReady.future;
+    if (!withCode && dial != _dials) return;
     if (_revokedIds.contains(agent.id) && !withCode) {
       await FingerprintStore.forget(agent.id);
       return;
     }
     final known = _registeredFingerprint(agent.id);
-    if (known != fingerprint && !withCode && !_registryLoaded) return;
+    if (known == null && !withCode) {
+      _revokedIds.add(agent.id);
+      await _forgetRevoked({agent.id});
+      return;
+    }
+    if (known != fingerprint && !withCode) return;
     try {
       if (known == fingerprint) {
         await _devices.touchLastSeen(agent.id);
