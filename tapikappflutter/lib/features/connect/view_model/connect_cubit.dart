@@ -33,6 +33,7 @@ class ConnectCubit extends Cubit<ConnectState> {
   StreamSubscription<void>? _codeRequests;
 
   List<DeviceModel> _trusted = const [];
+  bool _registryLoaded = false;
   List<DiscoveredAgent> _agents = const [];
   DiscoveredAgent? _connectedAgent;
   DiscoveredAgent? _pairingAgent;
@@ -40,6 +41,7 @@ class ConnectCubit extends Cubit<ConnectState> {
   bool _codeRequested = false;
   String? _codeAgentId;
   String? _codeFingerprint;
+  String? _codeTrustingId;
   int _dials = 0;
   final Set<String> _revokedIds = <String>{};
   final Set<String> _rejectedFingerprints = <String>{};
@@ -248,8 +250,9 @@ class ConnectCubit extends Cubit<ConnectState> {
   }
 
   void _onRegistry(List<DeviceModel> registry) {
-    final revoked = _revokedIn(registry);
+    final revoked = _revokedIn(registry)..remove(_pairingWithCodeId);
     _trusted = registry;
+    _registryLoaded = true;
     _revokedIds
       ..addAll(revoked)
       ..removeAll({for (final device in registry) device.id});
@@ -257,6 +260,11 @@ class ConnectCubit extends Cubit<ConnectState> {
     unawaited(_inheritFingerprints(registry));
     _publish();
     if (revoked.isNotEmpty) unawaited(_forgetRevoked(revoked));
+  }
+
+  String? get _pairingWithCodeId {
+    if (_codeTrustingId != null) return _codeTrustingId;
+    return _codeRequested ? _pairingAgent?.id ?? _connectingId : null;
   }
 
   Set<String> _revokedIn(List<DeviceModel> registry) {
@@ -306,12 +314,18 @@ class ConnectCubit extends Cubit<ConnectState> {
     final withCode = _codeRequested;
     if (_revokedIds.contains(agent.id) && !withCode) return;
     _revokedIds.remove(agent.id);
-    await FingerprintStore.remember(agent.id, fingerprint);
+    if (withCode) _codeTrustingId = agent.id;
+    try {
+      await FingerprintStore.remember(agent.id, fingerprint);
+    } finally {
+      if (_codeTrustingId == agent.id) _codeTrustingId = null;
+    }
     if (_revokedIds.contains(agent.id) && !withCode) {
       await FingerprintStore.forget(agent.id);
       return;
     }
     final known = _registeredFingerprint(agent.id);
+    if (known != fingerprint && !withCode && !_registryLoaded) return;
     try {
       if (known == fingerprint) {
         await _devices.touchLastSeen(agent.id);
