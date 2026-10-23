@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
@@ -28,6 +30,7 @@ class AppTabBar extends StatelessWidget {
   static const double indicatorWidth = 24;
   static const double indicatorHeight = 3;
   static const double maxTextScale = 1.3;
+  static const double minLabelGap = 4;
 
   final List<AppTabItem> items;
   final int currentIndex;
@@ -52,18 +55,27 @@ class AppTabBar extends StatelessWidget {
             ),
             child: SizedBox(
               height: barHeight,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  for (var i = 0; i < items.length; i++)
-                    Flexible(
-                      child: _TabButton(
-                        item: items[i],
-                        selected: i == currentIndex,
-                        onTap: () => onTap(i),
-                      ),
-                    ),
-                ],
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final labelScaler = _labelScaler(
+                    context,
+                    constraints.maxWidth / items.length - minLabelGap,
+                  );
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      for (var i = 0; i < items.length; i++)
+                        Flexible(
+                          child: _TabButton(
+                            item: items[i],
+                            selected: i == currentIndex,
+                            labelScaler: labelScaler,
+                            onTap: () => onTap(i),
+                          ),
+                        ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -71,17 +83,65 @@ class AppTabBar extends StatelessWidget {
       ),
     );
   }
+
+  TextScaler _labelScaler(BuildContext context, double room) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final fontSize = AppTextStyles.labelS.fontSize!;
+    final scale = scaler.scale(fontSize) / fontSize;
+    if (scale <= 1) return scaler;
+    final direction = Directionality.of(context);
+    final boldText = MediaQuery.boldTextOf(context);
+    var fit = scale;
+    for (final item in items) {
+      for (final selected in [false, true]) {
+        final style = _TabButton.labelStyle(selected)
+            .copyWith(fontWeight: boldText ? FontWeight.bold : null);
+        final wide = _labelWidth(item.label, style, scale, direction);
+        if (wide <= room) continue;
+        final normal = _labelWidth(item.label, style, 1, direction);
+        fit = math.min(
+          fit,
+          1 + (room - normal) * (scale - 1) / (wide - normal),
+        );
+      }
+    }
+    return TextScaler.linear(math.max(1.0, fit));
+  }
+
+  static double _labelWidth(
+    String label,
+    TextStyle style,
+    double scale,
+    TextDirection direction,
+  ) {
+    final painter = TextPainter(
+      text: TextSpan(text: label, style: style),
+      textDirection: direction,
+      textScaler: TextScaler.linear(scale),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
 }
 
 class _TabButton extends StatelessWidget {
   const _TabButton({
     required this.item,
     required this.selected,
+    required this.labelScaler,
     required this.onTap,
   });
 
+  static TextStyle labelStyle(bool selected) => AppTextStyles.labelS.copyWith(
+    fontWeight: selected ? FontWeight.w600 : null,
+    letterSpacing: selected ? 0 : null,
+  );
+
   final AppTabItem item;
   final bool selected;
+  final TextScaler labelScaler;
   final VoidCallback onTap;
 
   @override
@@ -110,11 +170,8 @@ class _TabButton extends StatelessWidget {
                   const SizedBox(height: AppTabBar.iconGap),
                   Text(
                     item.label,
-                    style: AppTextStyles.labelS.copyWith(
-                      color: color,
-                      fontWeight: selected ? FontWeight.w600 : null,
-                      letterSpacing: selected ? 0 : null,
-                    ),
+                    style: labelStyle(selected).copyWith(color: color),
+                    textScaler: labelScaler,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
