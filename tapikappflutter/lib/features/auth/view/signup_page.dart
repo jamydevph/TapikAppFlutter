@@ -231,7 +231,11 @@ class _SignupPageState extends State<SignupPage> {
                       child: Text(
                         'Sign in',
                         style: AppTextStyles.labelM.copyWith(
-                          color: loading ? colors.textTertiary : colors.accent,
+                          color: loading
+                              ? colors.textTertiary.withValues(
+                                  alpha: AppOpacity.disabled,
+                                )
+                              : colors.accent,
                         ),
                       ),
                     ),

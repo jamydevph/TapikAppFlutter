@@ -38,7 +38,7 @@ class AppSwitch extends StatelessWidget {
                 height: height,
                 padding: const EdgeInsets.all(thumbInset),
                 decoration: BoxDecoration(
-                  color: value ? colors.primary : colors.textTertiary,
+                  color: value ? colors.primary : colors.controlOff,
                   borderRadius: BorderRadius.circular(AppRadius.full),
                 ),
                 child: AnimatedAlign(

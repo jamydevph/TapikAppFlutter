@@ -216,7 +216,9 @@ class _LinkText extends StatelessWidget {
         child: Text(
           text,
           style: AppTextStyles.labelM.copyWith(
-            color: onTap == null ? colors.textTertiary : colors.accent,
+            color: onTap == null
+                ? colors.textTertiary.withValues(alpha: AppOpacity.disabled)
+                : colors.accent,
           ),
         ),
       ),

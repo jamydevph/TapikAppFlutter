@@ -25,6 +25,8 @@ class AppTabBar extends StatelessWidget {
   static const double itemWidth = 64;
   static const double iconSize = 22;
   static const double iconGap = 5;
+  static const double indicatorWidth = 24;
+  static const double indicatorHeight = 3;
   static const double maxTextScale = 1.3;
 
   final List<AppTabItem> items;
@@ -37,6 +39,7 @@ class AppTabBar extends StatelessWidget {
     return Material(
       color: colors.elevated,
       shape: Border(top: BorderSide(color: colors.borderDefault)),
+      borderOnForeground: false,
       child: SafeArea(
         top: false,
         child: MediaQuery.withClampedTextScaling(
@@ -84,7 +87,7 @@ class _TabButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
-    final color = selected ? colors.accent : colors.textTertiary;
+    final color = selected ? colors.accent : colors.navInactive;
     return Semantics(
       selected: selected,
       child: InkWell(
@@ -95,18 +98,43 @@ class _TabButton extends StatelessWidget {
             minWidth: AppTabBar.itemWidth,
             minHeight: AppTabBar.barHeight,
           ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
             children: [
-              Icon(item.icon, size: AppTabBar.iconSize, color: color),
-              const SizedBox(height: AppTabBar.iconGap),
-              Text(
-                item.label,
-                style: AppTextStyles.labelS.copyWith(color: color),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+              Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(item.icon, size: AppTabBar.iconSize, color: color),
+                  const SizedBox(height: AppTabBar.iconGap),
+                  Text(
+                    item.label,
+                    style: AppTextStyles.labelS.copyWith(
+                      color: color,
+                      fontWeight: selected ? FontWeight.w600 : null,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ),
+              if (selected)
+                Positioned(
+                  top: -AppTabBar.topInset,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.accent,
+                      borderRadius: BorderRadius.circular(
+                        AppTabBar.indicatorHeight / 2,
+                      ),
+                    ),
+                    child: const SizedBox(
+                      width: AppTabBar.indicatorWidth,
+                      height: AppTabBar.indicatorHeight,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),

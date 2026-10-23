@@ -177,7 +177,7 @@ class _LaptopIdCard extends StatelessWidget {
       'Check that your laptop shows the same ID before you type the code.';
   static const String mismatch = 'The IDs don’t match';
   static const double iconSize = 14;
-  static const double linkPadding = AppSpacing.xs;
+  static const double linkHeight = kMinInteractiveDimension;
 
   final String? laptopId;
   final VoidCallback onMismatch;
@@ -196,7 +196,7 @@ class _LaptopIdCard extends StatelessWidget {
           AppSpacing.md,
           AppSpacing.md,
           AppSpacing.md,
-          id == null ? AppSpacing.md : AppSpacing.md - linkPadding,
+          id == null ? AppSpacing.md : AppSpacing.x3s,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -250,8 +250,8 @@ class _LaptopIdCard extends StatelessWidget {
                 style: TextButton.styleFrom(
                   foregroundColor: colors.textDanger,
                   textStyle: AppTextStyles.labelM,
-                  padding: const EdgeInsets.symmetric(vertical: linkPadding),
-                  minimumSize: Size.zero,
+                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                  minimumSize: const Size(0, linkHeight),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 child: const Text(mismatch),

@@ -23,7 +23,7 @@ class AppBackButton extends StatelessWidget {
     final colors = AppColors.of(context);
     final enabled = onPressed != null;
     final glyphColor = !enabled
-        ? colors.textTertiary
+        ? colors.textTertiary.withValues(alpha: AppOpacity.disabled)
         : circled
         ? colors.textPrimary
         : colors.textSecondary;
