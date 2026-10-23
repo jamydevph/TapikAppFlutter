@@ -113,6 +113,7 @@ class _TabButton extends StatelessWidget {
                     style: AppTextStyles.labelS.copyWith(
                       color: color,
                       fontWeight: selected ? FontWeight.w600 : null,
+                      letterSpacing: selected ? 0 : null,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

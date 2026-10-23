@@ -12,6 +12,7 @@ class AppCheckbox extends StatelessWidget {
   });
 
   static const double boxSize = 20;
+  static const double borderWidth = 1.5;
   static const double gap = AppSpacing.xs + AppSpacing.x3s;
 
   final bool value;
@@ -41,7 +42,10 @@ class AppCheckbox extends StatelessWidget {
                   borderRadius: BorderRadius.circular(AppRadius.xs),
                   border: value
                       ? null
-                      : Border.all(color: colors.borderDefault),
+                      : Border.all(
+                          color: colors.controlOff,
+                          width: borderWidth,
+                        ),
                 ),
                 child: value
                     ? Icon(
