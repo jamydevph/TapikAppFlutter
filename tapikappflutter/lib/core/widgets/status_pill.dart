@@ -24,7 +24,7 @@ class StatusPill extends StatelessWidget {
     final (fill, dot, text, glow) = switch (tone) {
       StatusPillTone.success => (
         colors.surfaceAlt,
-        colors.success,
+        colors.textSuccess,
         colors.textSuccess,
         AppShadows.glowSuccess,
       ),
@@ -37,7 +37,7 @@ class StatusPill extends StatelessWidget {
       StatusPillTone.muted => (
         colors.surfaceAlt,
         colors.borderStrong,
-        colors.textTertiary,
+        colors.textSecondary,
         null,
       ),
     };

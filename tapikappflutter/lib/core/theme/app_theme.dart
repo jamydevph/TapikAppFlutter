@@ -82,7 +82,7 @@ class AppTheme {
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          backgroundColor: colors.primary,
+          backgroundColor: colors.buttonPrimary,
           foregroundColor: colors.onPrimary,
           disabledBackgroundColor: colors.surfaceAlt,
           disabledForegroundColor: colors.textTertiary,
