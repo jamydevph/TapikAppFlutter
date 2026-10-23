@@ -442,8 +442,10 @@ class _DeviceSheet extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.md),
               Text(
-                'Revoking removes this laptop from your account on every '
-                'phone. You will need the pairing code to trust it again.',
+                'Revoking removes this laptop from your account, and this '
+                'phone forgets it now. Your other phones forget it the next '
+                'time they open Tapikapp online. To use it again, a phone '
+                'needs the laptop’s pairing code.',
                 style: AppTextStyles.bodyS.copyWith(
                   color: colors.textSecondary,
                 ),
