@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -15,8 +16,10 @@ import '../../features/settings/view_model/theme_cubit.dart';
 import '../../features/trackpad/view_model/trackpad_cubit.dart';
 import '../../services/discovery/bonsoir_discovery.dart';
 import '../../services/discovery/discovery.dart';
+import '../../services/transport/bt_hid_transport.dart';
 import '../../services/transport/network_transport.dart';
 import '../../services/transport/transport.dart';
+import '../../services/transport/transport_switch.dart';
 
 class AppProviders extends StatelessWidget {
   const AppProviders({
@@ -28,6 +31,9 @@ class AppProviders extends StatelessWidget {
   final ThemeCubit themeCubit;
   final Widget child;
 
+  static bool get _bluetoothKeyboardHere =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
   static PasswordResetCubit passwordResetCubit(BuildContext context) {
     return PasswordResetCubit(context.read<AuthRepository>());
   }
@@ -36,7 +42,7 @@ class AppProviders extends StatelessWidget {
     return ConnectCubit(
       context.read<DeviceRepository>(),
       context.read<AgentBrowser>(),
-      context.read<Transport>(),
+      context.read<TransportSwitch>(),
     );
   }
 
@@ -77,9 +83,15 @@ class AppProviders extends StatelessWidget {
           create: (_) => BonsoirBrowser(),
           dispose: (browser) => browser.dispose(),
         ),
-        RepositoryProvider<Transport>(
-          create: (_) => NetworkTransport(),
+        RepositoryProvider<TransportSwitch>(
+          create: (_) => TransportSwitch(
+            network: NetworkTransport(),
+            bluetooth: _bluetoothKeyboardHere ? BtHidTransport() : null,
+          ),
           dispose: (transport) => transport.dispose(),
+        ),
+        RepositoryProvider<Transport>(
+          create: (context) => context.read<TransportSwitch>(),
         ),
       ],
       child: MultiBlocProvider(

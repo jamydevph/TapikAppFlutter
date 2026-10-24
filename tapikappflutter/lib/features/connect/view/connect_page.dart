@@ -37,20 +37,38 @@ class _ConnectView extends StatefulWidget {
   static const String nearbyLabel = 'ON THIS NETWORK';
   static const String offlineLabel = 'OFFLINE';
   static const String emptyNearby = 'No laptops found on this network yet.';
+  static const String wifiHint = 'Both devices must be on the same Wi-Fi.';
+  static const String bothHint =
+      'Wi-Fi needs Tapikapp on the laptop. Bluetooth works without it.';
   static const Duration relativeTimeRefresh = Duration(minutes: 1);
 
   @override
   State<_ConnectView> createState() => _ConnectViewState();
 }
 
-class _ConnectViewState extends State<_ConnectView> {
+class _ConnectViewState extends State<_ConnectView>
+    with WidgetsBindingObserver {
   Timer? _clock;
   bool _prompting = false;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _clock?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(context.read<ConnectCubit>().refreshBluetooth());
+    }
   }
 
   Future<void> _promptForCode(ConnectCubit cubit, ConnectReady state) async {
@@ -120,6 +138,7 @@ class _ConnectViewState extends State<_ConnectView> {
             final registryError = state is ConnectReady
                 ? state.registryError
                 : null;
+            final bluetooth = state is ConnectReady ? state.bluetooth : null;
             _syncClock(offline);
             return ListView(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
@@ -154,6 +173,10 @@ class _ConnectViewState extends State<_ConnectView> {
                     ),
                   ),
                 ],
+                if (bluetooth != null) ...[
+                  const SizedBox(height: AppSpacing.xl + AppSpacing.x2s),
+                  _BluetoothSection(section: bluetooth),
+                ],
                 if (offline.isNotEmpty || registryError != null) ...[
                   const SizedBox(height: AppSpacing.xl + AppSpacing.x2s),
                   _SectionLabel(_ConnectView.offlineLabel),
@@ -175,7 +198,9 @@ class _ConnectViewState extends State<_ConnectView> {
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 Text(
-                  'Both devices must be on the same Wi-Fi.',
+                  bluetooth == null
+                      ? _ConnectView.wifiHint
+                      : _ConnectView.bothHint,
                   style: AppTextStyles.caption.copyWith(
                     color: colors.textTertiary,
                   ),
@@ -331,6 +356,122 @@ class _DeviceTile extends StatelessWidget {
             ? '$platform · never seen'
             : '$platform · last seen ${RelativeTime.ago(seen)}';
     }
+  }
+}
+
+class _BluetoothSection extends StatelessWidget {
+  const _BluetoothSection({required this.section});
+
+  static const String label = 'BLUETOOTH · NO AGENT NEEDED';
+  static const String openSettings = 'Open Bluetooth settings';
+
+  final BluetoothSection section;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    final cubit = context.read<ConnectCubit>();
+    final error = section.error;
+    final computers = section.computers;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionLabel(label),
+        const SizedBox(height: AppSpacing.xs + AppSpacing.x3s),
+        ...switch (section.access) {
+          BluetoothAccess.needsPermission => _notice(
+            context,
+            message:
+                'Allow Bluetooth to use the computers this phone is '
+                'already paired with.',
+            action: 'Allow Bluetooth',
+            onPressed: cubit.allowBluetooth,
+          ),
+          BluetoothAccess.blocked => _notice(
+            context,
+            message:
+                'Bluetooth access is off for Tapikapp. Turn on Nearby '
+                'devices in its app settings.',
+            action: 'Open app settings',
+            onPressed: cubit.allowBluetooth,
+          ),
+          BluetoothAccess.off => _notice(
+            context,
+            message: 'Bluetooth is off. Turn it on to use a paired computer.',
+            action: openSettings,
+            onPressed: cubit.openBluetoothSettings,
+          ),
+          BluetoothAccess.ready when computers.isEmpty => _notice(
+            context,
+            message:
+                'No computers are paired with this phone yet. Pair one in '
+                'Bluetooth settings first.',
+            action: openSettings,
+            onPressed: cubit.openBluetoothSettings,
+          ),
+          BluetoothAccess.ready => [
+            for (var i = 0; i < computers.length; i++) ...[
+              if (i > 0) const SizedBox(height: AppSpacing.md),
+              _BluetoothTile(computer: computers[i]),
+            ],
+          ],
+        },
+        if (error != null) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            error,
+            style: AppTextStyles.bodyS.copyWith(color: colors.textDanger),
+          ),
+        ],
+      ],
+    );
+  }
+
+  static List<Widget> _notice(
+    BuildContext context, {
+    required String message,
+    required String action,
+    required Future<void> Function() onPressed,
+  }) {
+    final colors = AppColors.of(context);
+    return [
+      Text(
+        message,
+        style: AppTextStyles.bodyS.copyWith(color: colors.textTertiary),
+      ),
+      const SizedBox(height: AppSpacing.sm),
+      OutlinedButton(
+        onPressed: () => unawaited(onPressed()),
+        child: Text(action),
+      ),
+    ];
+  }
+}
+
+class _BluetoothTile extends StatelessWidget {
+  const _BluetoothTile({required this.computer});
+
+  final ConnectDevice computer;
+
+  @override
+  Widget build(BuildContext context) {
+    final cubit = context.read<ConnectCubit>();
+    return DeviceCard(
+      name: computer.name,
+      meta: switch (computer.status) {
+        ConnectDeviceStatus.connected => 'Bluetooth · tap to disconnect',
+        ConnectDeviceStatus.connecting => 'Bluetooth · connecting…',
+        _ => 'Paired over Bluetooth · tap to connect',
+      },
+      status: computer.status == ConnectDeviceStatus.connected
+          ? DeviceCardStatus.connected
+          : DeviceCardStatus.available,
+      onTap: switch (computer.status) {
+        ConnectDeviceStatus.connected => () => cubit.disconnectBluetooth(),
+        ConnectDeviceStatus.connecting => null,
+        _ => () => cubit.connectBluetooth(computer),
+      },
+    );
   }
 }
 
