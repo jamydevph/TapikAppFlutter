@@ -48,6 +48,23 @@ class ConnectDevice extends Equatable {
   List<Object?> get props => [id, name, platform, status, address, lastSeenAt];
 }
 
+enum BluetoothAccess { needsPermission, blocked, off, ready }
+
+class BluetoothSection extends Equatable {
+  const BluetoothSection({
+    required this.access,
+    this.computers = const [],
+    this.error,
+  });
+
+  final BluetoothAccess access;
+  final List<ConnectDevice> computers;
+  final String? error;
+
+  @override
+  List<Object?> get props => [access, computers, error];
+}
+
 sealed class ConnectState extends Equatable {
   const ConnectState();
 
@@ -68,6 +85,7 @@ class ConnectReady extends ConnectState {
     this.pairingLaptopId,
     this.connectionError,
     this.registryError,
+    this.bluetooth,
   });
 
   final List<ConnectDevice> nearby;
@@ -77,6 +95,7 @@ class ConnectReady extends ConnectState {
   final String? pairingLaptopId;
   final String? connectionError;
   final String? registryError;
+  final BluetoothSection? bluetooth;
 
   @override
   List<Object?> get props => [
@@ -87,6 +106,7 @@ class ConnectReady extends ConnectState {
     pairingLaptopId,
     connectionError,
     registryError,
+    bluetooth,
   ];
 }
 

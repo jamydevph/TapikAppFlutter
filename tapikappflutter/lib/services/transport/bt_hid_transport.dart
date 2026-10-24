@@ -10,8 +10,20 @@ import 'transport.dart';
 class BtHidHost {
   const BtHidHost({required this.address, required this.name});
 
+  static final RegExp _macName = RegExp(
+    r'\b(i?mac|macbook\w*)\b',
+    caseSensitive: false,
+  );
+
   final String address;
   final String name;
+
+  String? get platform => platformFor(name);
+
+  static String? platformFor(String? name) {
+    if (name == null) return null;
+    return _macName.hasMatch(name) ? 'macos' : null;
+  }
 }
 
 class BtHidTransport implements Transport {
@@ -22,9 +34,14 @@ class BtHidTransport implements Transport {
   }
 
   static const String channelName = 'tapikapp/bt_hid';
+  static const String hidName = 'Tapikapp';
+  static const Duration releaseTimeout = Duration(seconds: 3);
+  static const Duration registerTimeout = Duration(seconds: 10);
 
   final MethodChannel _channel;
   final HidReports _reports;
+  final StreamController<void> _hostsChanged =
+      StreamController<void>.broadcast();
   final StreamController<TransportState> _states =
       StreamController<TransportState>.broadcast();
   final StreamController<Packet> _incoming =
@@ -37,6 +54,10 @@ class BtHidTransport implements Transport {
   TransportState _state = TransportState.disconnected;
   TransportEndpoint? _endpoint;
   bool _disposed = false;
+  bool _permissionBlocked = false;
+  Completer<void>? _released;
+  Future<void>? _releasing;
+  int _generation = 0;
 
   @override
   TransportState get state => _state;
@@ -61,8 +82,16 @@ class BtHidTransport implements Transport {
 
   int get skippedCharacters => _reports.skippedCharacters;
 
+  Stream<void> get hostsChanged => _hostsChanged.stream;
+
+  bool get permissionBlocked => _permissionBlocked;
+
   Future<bool> isSupported() async {
     return await _invoke<bool>('isSupported') ?? false;
+  }
+
+  Future<bool> isEnabled() async {
+    return await _invoke<bool>('isEnabled') ?? false;
   }
 
   Future<bool> hasPermission() async {
@@ -70,6 +99,14 @@ class BtHidTransport implements Transport {
   }
 
   Future<void> requestPermission() => _invoke<void>('requestPermission');
+
+  Future<bool> openBluetoothSettings() async {
+    return await _invoke<bool>('openBluetoothSettings') ?? false;
+  }
+
+  Future<bool> openAppSettings() async {
+    return await _invoke<bool>('openAppSettings') ?? false;
+  }
 
   Future<List<BtHidHost>> bondedHosts() async {
     final raw = await _invoke<List<Object?>>('bondedHosts') ?? const [];
@@ -85,15 +122,26 @@ class BtHidTransport implements Transport {
     if (_disposed) {
       throw const TransportFailure('The connection was already closed.');
     }
+    final releasing = _releasing;
+    if (releasing != null) await releasing;
+    final generation = ++_generation;
     _endpoint = endpoint;
     _emit(TransportState.connecting);
     try {
       final registered =
-          await _channel.invokeMethod<bool>('register', {
-            'name': endpoint.label ?? 'Tapikapp',
-            'descriptor': Uint8List.fromList(HidReports.descriptor),
-          }) ??
+          await _channel
+              .invokeMethod<bool>('register', {
+                'name': hidName,
+                'descriptor': Uint8List.fromList(HidReports.descriptor),
+              })
+              .timeout(registerTimeout) ??
           false;
+      if (generation != _generation) {
+        if (registered && _state == TransportState.disconnected) {
+          await _invoke<void>('unregister');
+        }
+        return;
+      }
       if (!registered) {
         throw const TransportFailure(
           'This phone could not start Bluetooth keyboard mode.',
@@ -104,18 +152,31 @@ class BtHidTransport implements Transport {
             'address': endpoint.host,
           }) ??
           false;
+      if (generation != _generation) {
+        if (accepted) await _invoke<void>('disconnect');
+        return;
+      }
       if (!accepted) {
         throw const TransportFailure(
           'That computer did not accept the Bluetooth connection.',
         );
       }
     } on PlatformException catch (error) {
-      _emit(TransportState.disconnected);
+      _failConnect(generation);
       throw TransportFailure(error.message ?? 'Bluetooth is not available.');
+    } on TimeoutException {
+      _failConnect(generation);
+      throw const TransportFailure(
+        'This phone could not start Bluetooth keyboard mode.',
+      );
     } on Failure {
-      _emit(TransportState.disconnected);
+      _failConnect(generation);
       rethrow;
     }
+  }
+
+  void _failConnect(int generation) {
+    if (generation == _generation) _emit(TransportState.disconnected);
   }
 
   @override
@@ -130,13 +191,37 @@ class BtHidTransport implements Transport {
 
   @override
   Future<void> disconnect() async {
+    _generation += 1;
+    final linked = _state != TransportState.disconnected;
     if (_state == TransportState.connected) _flush(_reports.releaseAll());
+    if (linked && (_released?.isCompleted ?? true)) {
+      _released = Completer<void>();
+    }
+    final released = _released;
     await _invoke<void>('disconnect');
     _emit(TransportState.disconnected);
+    if (released == null) return;
+    await released.future.timeout(releaseTimeout, onTimeout: () {});
+    if (_released == released) _released = null;
+  }
+
+  Future<void> release() {
+    final pending = _releasing;
+    if (pending != null) return pending;
+    final releasing = _release();
+    _releasing = releasing;
+    return releasing.whenComplete(() {
+      if (_releasing == releasing) _releasing = null;
+    });
+  }
+
+  Future<void> _release() async {
+    await disconnect();
+    await _invoke<void>('unregister');
   }
 
   @override
-  Future<void> forget() => disconnect();
+  Future<void> forget() => release();
 
   @override
   Future<void> dispose() async {
@@ -148,6 +233,7 @@ class BtHidTransport implements Transport {
     await _incoming.close();
     await _pairingErrors.close();
     await _codeRequests.close();
+    await _hostsChanged.close();
   }
 
   void _flush(List<HidReport> reports) {
@@ -176,17 +262,57 @@ class BtHidTransport implements Transport {
   }
 
   Future<Object?> _onNative(MethodCall call) async {
-    if (call.method != 'onState') return null;
-    switch (call.arguments) {
+    switch (call.method) {
+      case 'onState':
+        _onNativeState(call.arguments);
+      case 'onHostsChanged':
+        _notifyHostsChanged();
+      case 'onPermission':
+        _permissionBlocked = call.arguments == 'blocked';
+        _notifyHostsChanged();
+    }
+    return null;
+  }
+
+  void _onNativeState(Object? event) {
+    if (event is! Map) return;
+    final state = event['state'];
+    final address = event['address'] as String?;
+    final current = _endpoint?.host;
+    final mine = address == null || current == null || address == current;
+    switch (state) {
       case 'connected':
+        if (!mine) {
+          _endpoint = TransportEndpoint(
+            host: address,
+            label: event['name'] as String? ?? address,
+            platform: BtHidHost.platformFor(event['name'] as String?),
+            clientId: address,
+          );
+        }
         _emit(TransportState.connected);
       case 'connecting':
-        _emit(TransportState.connecting);
+        if (mine) _emit(TransportState.connecting);
       case 'disconnected':
+        final released = _released;
+        if (released != null && !released.isCompleted) released.complete();
+        if (!mine) return;
+        if (_state == TransportState.connecting && !_pairingErrors.isClosed) {
+          final name = _endpoint?.label ?? 'That computer';
+          _pairingErrors.add(
+            TransportFailure(
+              '$name did not accept the connection. '
+              'Check it is nearby with Bluetooth on.',
+            ),
+          );
+        }
         _reports.releaseAll();
         _emit(TransportState.disconnected);
     }
-    return null;
+  }
+
+  void _notifyHostsChanged() {
+    if (!_hostsChanged.isClosed) _hostsChanged.add(null);
   }
 
   void _emit(TransportState next) {
