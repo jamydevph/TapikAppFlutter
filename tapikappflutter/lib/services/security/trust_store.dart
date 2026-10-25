@@ -8,17 +8,29 @@ import 'paired_phone.dart';
 class TrustStore {
   const TrustStore._();
 
-  static const String key = 'agent.trusted.clients';
+  static const String key = 'agent.trusted.phones';
+  static const String legacyKey = 'agent.trusted.clients';
   static const String historyKey = 'agent.trusted.history';
+  static const String separator = ' ';
 
-  static Future<Set<String>> load() async {
+  static Future<Map<String, String>> load() async {
     final prefs = await SharedPreferences.getInstance();
-    return (prefs.getStringList(key) ?? const <String>[]).toSet();
+    if (prefs.containsKey(legacyKey)) await prefs.remove(legacyKey);
+    final clients = <String, String>{};
+    for (final entry in prefs.getStringList(key) ?? const <String>[]) {
+      final parts = entry.split(separator);
+      if (parts.length != 2 || parts.any((part) => part.isEmpty)) continue;
+      clients[parts.first] = parts.last;
+    }
+    return clients;
   }
 
-  static Future<void> remember(Set<String> clients) async {
+  static Future<void> remember(Map<String, String> clients) async {
     final prefs = await SharedPreferences.getInstance();
-    final saved = await prefs.setStringList(key, clients.toList());
+    final saved = await prefs.setStringList(key, [
+      for (final client in clients.entries)
+        [client.key, client.value].join(separator),
+    ]);
     if (!saved) {
       throw const DataFailure(
         'Tapikapp could not save the paired phones. Try again.',

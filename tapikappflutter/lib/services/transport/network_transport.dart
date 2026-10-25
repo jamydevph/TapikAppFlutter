@@ -6,8 +6,10 @@ import '../../core/error/failure.dart';
 import '../../core/protocol/codec.dart';
 import '../../core/protocol/packet.dart';
 import '../../core/protocol/packet_buffer.dart';
+import '../../core/protocol/pair_detail.dart';
 import '../security/agent_certificate.dart';
 import '../security/datagram_seal.dart';
+import '../security/reconnect_secret.dart';
 import 'transport.dart';
 
 class NetworkTransport implements Transport {
@@ -48,6 +50,7 @@ class NetworkTransport implements Transport {
   StreamSubscription<RawSocketEvent>? _datagramReader;
   InternetAddress? _address;
   String? _peerFingerprint;
+  String? _issuedSecret;
   DatagramSeal? _seal;
   bool _submittedCode = false;
   Timer? _keepalive;
@@ -139,11 +142,17 @@ class NetworkTransport implements Transport {
         onError: (Object _) => _dropConnection(generation),
       );
       _emit(TransportState.pairing);
+      final secret = endpoint.secret;
       _sendDirect(
-        PairPacket(
-          expected == null ? PairStage.introduce : PairStage.hello,
-          endpoint.clientId,
-        ),
+        expected != null && secret != null
+            ? PairPacket(
+                PairStage.resume,
+                PairDetail.resume(endpoint.clientId, secret),
+              )
+            : PairPacket(
+                PairStage.introduce,
+                PairDetail.introduce(endpoint.clientId),
+              ),
       );
     } catch (error) {
       socket?.destroy();
@@ -172,6 +181,9 @@ class NetworkTransport implements Transport {
   @override
   String? get peerFingerprint => _peerFingerprint;
 
+  @override
+  String? get issuedSecret => _issuedSecret;
+
   void _sendDirect(Packet packet) {
     final socket = _socket;
     if (socket == null) return;
@@ -196,7 +208,11 @@ class NetworkTransport implements Transport {
           unawaited(disconnect());
           return;
         }
-        final key = DatagramSeal.decodeKey(packet.detail);
+        final parts = PairDetail.parts(packet.detail);
+        final wellFormed =
+            parts.length == 1 ||
+            parts.length == 2 && ReconnectSecret.isToken(parts.last);
+        final key = wellFormed ? DatagramSeal.decodeKey(parts.first) : null;
         if (key == null) {
           if (!_pairingErrors.isClosed) {
             _pairingErrors.add(
@@ -210,6 +226,7 @@ class NetworkTransport implements Transport {
           return;
         }
         _seal = DatagramSeal(key);
+        if (parts.length == 2) _issuedSecret = parts.last;
         _lastHeard = DateTime.now();
         _startKeepalive();
         _emit(TransportState.connected);
@@ -217,11 +234,16 @@ class NetworkTransport implements Transport {
         if (!_pairingErrors.isClosed) {
           _pairingErrors.add(HandshakeFailure(packet.detail));
         }
+      case PairStage.busy:
+        if (!_pairingErrors.isClosed) {
+          _pairingErrors.add(TransportFailure(packet.detail));
+        }
       case PairStage.codeRequired:
         if (!_codeRequests.isClosed) _codeRequests.add(null);
       case PairStage.hello:
       case PairStage.code:
       case PairStage.introduce:
+      case PairStage.resume:
       case PairStage.forget:
         return;
     }
@@ -330,6 +352,7 @@ class NetworkTransport implements Transport {
     _address = null;
     _endpoint = null;
     _peerFingerprint = null;
+    _issuedSecret = null;
     _seal = null;
     _submittedCode = false;
     _keepalive?.cancel();

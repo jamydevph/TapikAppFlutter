@@ -75,6 +75,10 @@ class AgentCubit extends Cubit<AgentState> {
     emit(state.copyWith(launchAtLogin: enabled));
   }
 
+  void openPairing() => _server.openPairing();
+
+  void closePairing() => _server.closePairing();
+
   void disconnect() {
     if (!state.hasConnection) return;
     unawaited(_server.disconnectClient());
@@ -114,6 +118,8 @@ class AgentCubit extends Cubit<AgentState> {
       state.copyWith(
         listening: server.listening,
         pairingCode: () => server.pairingCode,
+        pairingOpenUntil: () => server.pairingOpenUntil,
+        pairingStopped: server.pairingStopped,
         connectedPhone: () => server.client,
         connectedPhoneId: () => server.phoneId,
         phones: server.phones,

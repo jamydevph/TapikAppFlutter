@@ -39,6 +39,9 @@ class _Recorder implements Transport {
   String? get peerFingerprint => null;
 
   @override
+  String? get issuedSecret => null;
+
+  @override
   void send(Packet packet) => sent.add(packet);
 
   @override

@@ -60,6 +60,9 @@ class TransportSwitch implements Transport {
   String? get peerFingerprint => _active.peerFingerprint;
 
   @override
+  String? get issuedSecret => _active.issuedSecret;
+
+  @override
   Future<void> connect(TransportEndpoint endpoint) => _active.connect(endpoint);
 
   @override

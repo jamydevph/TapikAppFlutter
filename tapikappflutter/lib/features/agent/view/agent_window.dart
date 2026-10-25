@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -5,6 +7,7 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_tokens.dart';
 import '../../../core/theme/app_typography.dart';
 import '../../../core/widgets/app_danger_button.dart';
+import '../../../core/widgets/app_primary_button.dart';
 import '../../../core/widgets/app_switch.dart';
 import '../../../core/widgets/app_tab_bar.dart';
 import '../../../core/widgets/logo_mark.dart';
@@ -20,8 +23,6 @@ class AgentWindow extends StatelessWidget {
   const AgentWindow({super.key});
 
   static const Size windowSize = Size(400, 760);
-  static const String pairingHint =
-      'A code appears here when a new phone asks to pair.';
   static const String noPhoneTitle = 'No phone connected';
   static const String noPhoneHint =
       'Open Tapikapp on your phone and pick this laptop.';
@@ -115,11 +116,15 @@ class AgentWindow extends StatelessWidget {
                           ),
                           _CodeSlot(code: state.pairingCode),
                           const SizedBox(height: AppSpacing.xs),
-                          Text(
-                            AgentWindow.pairingHint,
-                            style: AppTextStyles.caption.copyWith(
-                              color: colors.textTertiary,
-                            ),
+                          _PairingWindow(
+                            openUntil: state.pairingOpenUntil,
+                            stopped: state.pairingStopped,
+                            hasCode: state.pairingCode != null,
+                            busy: state.hasConnection,
+                            onOpen: state.listening && !state.hasConnection
+                                ? cubit.openPairing
+                                : null,
+                            onClose: cubit.closePairing,
                           ),
                           if (state.laptopId case final laptopId?) ...[
                             const SizedBox(height: AppSpacing.xl),
@@ -350,6 +355,114 @@ class _CodeSlot extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _PairingWindow extends StatefulWidget {
+  const _PairingWindow({
+    required this.openUntil,
+    required this.stopped,
+    required this.hasCode,
+    required this.busy,
+    required this.onOpen,
+    required this.onClose,
+  });
+
+  static const String open = 'Pair a phone';
+  static const String stop = 'Stop pairing';
+  static const String closedHint =
+      'Click Pair a phone, then pick this laptop on your phone.';
+  static const String busyHint =
+      'Disconnect the connected phone to pair another one.';
+  static const String stoppedHint =
+      'Too many wrong codes, so pairing stopped. '
+      'Click Pair a phone to try again.';
+  static const Duration tick = Duration(seconds: 1);
+
+  final DateTime? openUntil;
+  final bool stopped;
+  final bool hasCode;
+  final bool busy;
+  final VoidCallback? onOpen;
+  final VoidCallback onClose;
+
+  static String countdown(Duration left) {
+    final seconds = (left.inMilliseconds + 999) ~/ 1000;
+    final clamped = seconds < 0 ? 0 : seconds;
+    return '${clamped ~/ 60}:${(clamped % 60).toString().padLeft(2, '0')}';
+  }
+
+  @override
+  State<_PairingWindow> createState() => _PairingWindowState();
+}
+
+class _PairingWindowState extends State<_PairingWindow> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTicker();
+  }
+
+  @override
+  void didUpdateWidget(_PairingWindow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.openUntil != widget.openUntil) _syncTicker();
+  }
+
+  void _syncTicker() {
+    _ticker?.cancel();
+    _ticker = widget.openUntil == null
+        ? null
+        : Timer.periodic(_PairingWindow.tick, (_) => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = AppColors.of(context);
+    final until = widget.openUntil;
+    final String hint;
+    if (until != null) {
+      final left = _PairingWindow.countdown(until.difference(DateTime.now()));
+      hint = widget.hasCode
+          ? 'Type this code on your phone. Pairing is open for $left.'
+          : 'Pairing is open for $left. Pick this laptop on your phone.';
+    } else if (widget.stopped) {
+      hint = _PairingWindow.stoppedHint;
+    } else {
+      hint = widget.busy ? _PairingWindow.busyHint : _PairingWindow.closedHint;
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (until != null)
+          OutlinedButton(
+            onPressed: widget.onClose,
+            child: const Text(_PairingWindow.stop),
+          )
+        else
+          AppPrimaryButton(
+            label: _PairingWindow.open,
+            onPressed: widget.onOpen,
+          ),
+        const SizedBox(height: AppSpacing.xs),
+        Text(
+          hint,
+          style: AppTextStyles.caption.copyWith(
+            color: until == null && widget.stopped
+                ? colors.textDanger
+                : colors.textTertiary,
+          ),
+        ),
+      ],
     );
   }
 }

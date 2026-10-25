@@ -5,6 +5,7 @@ import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
+import 'package:tapikappflutter/services/security/reconnect_secret.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
@@ -12,8 +13,11 @@ import 'package:tapikappflutter/services/transport/transport.dart';
 late final AgentCertificate _certificate;
 
 const String _scratchPhone = 'scratch-phone';
+const String _scratchSecret = 'scratch-secret';
 
-PairingGuard _guard() => PairingGuard(trustedClients: const {_scratchPhone});
+PairingGuard _guard() => PairingGuard(
+  trustedClients: {_scratchPhone: ReconnectSecret.hash(_scratchSecret)},
+);
 
 Future<void> main() async {
   stdout.writeln('generating a self-signed certificate (one RSA keypair)…');
@@ -50,6 +54,7 @@ Future<void> main() async {
       tcpPort: ports.$1,
       udpPort: ports.$2,
       fingerprint: _certificate.fingerprint,
+      secret: _scratchSecret,
     ),
   );
   await _settle();
@@ -130,6 +135,7 @@ Future<void> main() async {
       tcpPort: ports.$1,
       udpPort: ports.$2,
       fingerprint: _certificate.fingerprint,
+      secret: _scratchSecret,
     ),
   );
   await _settle();
@@ -238,6 +244,7 @@ Future<_Check> _counterResetsPerClient() async {
         tcpPort: ports.$1,
         udpPort: ports.$2,
         fingerprint: _certificate.fingerprint,
+        secret: _scratchSecret,
       ),
     );
     await _settle();

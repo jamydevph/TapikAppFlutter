@@ -9,6 +9,7 @@ import '../../core/error/failure.dart';
 import '../../core/protocol/codec.dart';
 import '../../core/protocol/packet.dart';
 import '../../core/protocol/packet_buffer.dart';
+import '../../core/protocol/pair_detail.dart';
 import '../../core/resources/constants.dart';
 import '../security/agent_certificate.dart';
 import '../security/datagram_seal.dart';
@@ -23,6 +24,8 @@ class AgentServerState extends Equatable {
     this.phones = const [],
     this.phoneId,
     this.forgetUnsaved = false,
+    this.pairingOpenUntil,
+    this.pairingStopped = false,
   });
 
   static const AgentServerState stopped = AgentServerState();
@@ -33,10 +36,14 @@ class AgentServerState extends Equatable {
   final List<PairedPhone> phones;
   final String? phoneId;
   final bool forgetUnsaved;
+  final DateTime? pairingOpenUntil;
+  final bool pairingStopped;
 
   bool get hasClient => client != null;
 
   bool get isPairing => pairingCode != null;
+
+  bool get isPairingOpen => pairingOpenUntil != null;
 
   int get pairedPhones => phones.length;
 
@@ -44,14 +51,19 @@ class AgentServerState extends Equatable {
     required List<PairedPhone> phones,
     required String? phoneId,
     required bool forgetUnsaved,
+    required String? visibleCode,
+    required DateTime? pairingOpenUntil,
+    required bool pairingStopped,
   }) {
     return AgentServerState(
       listening: listening,
       client: client,
-      pairingCode: pairingCode,
+      pairingCode: pairingCode == null ? null : visibleCode,
       phones: phones,
       phoneId: phoneId,
       forgetUnsaved: forgetUnsaved,
+      pairingOpenUntil: pairingOpenUntil,
+      pairingStopped: pairingStopped,
     );
   }
 
@@ -63,6 +75,8 @@ class AgentServerState extends Equatable {
     phones,
     phoneId,
     forgetUnsaved,
+    pairingOpenUntil,
+    pairingStopped,
   ];
 }
 
@@ -79,7 +93,7 @@ class AgentServer {
 
   final AgentCertificate certificate;
   final PairingGuard guard;
-  final Future<void> Function(Set<String>)? rememberClients;
+  final Future<void> Function(Map<String, String>)? rememberClients;
   final Future<void> Function(List<PairedPhone>)? rememberHistory;
   final Duration peerTimeout;
   final int tcpPort;
@@ -95,12 +109,16 @@ class AgentServer {
   String? _clientLabel;
   static const Duration handshakeTick = Duration(seconds: 1);
   static const Duration defaultPeerTimeout = Duration(seconds: 8);
+  static const String phoneAlreadyConnected =
+      'Another phone is using this laptop right now. '
+      'Try again once it disconnects.';
   static const Set<PacketType> motionTypes = {
     PacketType.move,
     PacketType.scroll,
   };
 
   Timer? _handshake;
+  Timer? _pairingTimer;
   DateTime _lastHeard = DateTime.fromMillisecondsSinceEpoch(0);
   SecureServerSocket? _server;
   RawDatagramSocket? _datagrams;
@@ -193,12 +211,48 @@ class AgentServer {
     await datagramReader?.cancel();
     datagrams?.close();
     await server?.close();
+    _pairingTimer?.cancel();
+    _pairingTimer = null;
+    guard.closePairing();
     _emit(AgentServerState.stopped);
   }
 
   Future<void> disconnectClient() async {
     await _dropClient();
     _emit(AgentServerState(listening: _state.listening));
+  }
+
+  void openPairing() {
+    if (!_state.listening) return;
+    guard.openPairing();
+    _schedulePairingEnd();
+    _emit(_state);
+  }
+
+  void closePairing() {
+    _pairingTimer?.cancel();
+    _pairingTimer = null;
+    final waiting = guard.awaitsCode;
+    guard.closePairing();
+    if (waiting) {
+      _reply(const PairPacket(PairStage.rejected, PairingGuard.pairingClosed));
+      unawaited(disconnectClient());
+      return;
+    }
+    _emit(_state);
+  }
+
+  void _schedulePairingEnd() {
+    _pairingTimer?.cancel();
+    final until = guard.pairingOpenUntil;
+    _pairingTimer = until == null
+        ? null
+        : Timer(until.difference(DateTime.now()), _onPairingEnd);
+  }
+
+  void _onPairingEnd() {
+    _pairingTimer = null;
+    closePairing();
   }
 
   Future<void> forgetAllPhones() async {
@@ -272,7 +326,20 @@ class AgentServer {
     unawaited(socket.done.catchError((Object _) => socket));
     if (_client != null) {
       if (guard.isAccepted) {
-        socket.destroy();
+        try {
+          socket.add(
+            PacketCodec.encode(
+              const PairPacket(PairStage.busy, phoneAlreadyConnected),
+            ),
+          );
+        } catch (_) {}
+        unawaited(
+          socket
+              .flush()
+              .timeout(handshakeTick)
+              .then<void>((_) {}, onError: (Object _) {})
+              .whenComplete(socket.destroy),
+        );
         return;
       }
       unawaited(_dropClient());
@@ -307,7 +374,9 @@ class AgentServer {
 
   void _watchdog() {
     if (!guard.isAccepted) {
-      if (guard.hasTimedOut()) unawaited(disconnectClient());
+      if (!guard.hasTimedOut()) return;
+      _reply(const PairPacket(PairStage.rejected, PairingGuard.timedOut));
+      unawaited(disconnectClient());
       return;
     }
     if (DateTime.now().difference(_lastHeard) > peerTimeout) {
@@ -342,9 +411,16 @@ class AgentServer {
     if (!guard.isAccepted) {
       final decision = guard.onPacket(packet);
       final reply = decision.reply;
-      if (reply != null) _reply(_withSessionKey(reply));
+      if (reply != null) _reply(_withSessionKey(reply, decision.issuedSecret));
+      if (decision.outcome == PairingOutcome.retry) {
+        _reply(const PairPacket(PairStage.codeRequired));
+      }
+      if (!guard.isPairingOpen) {
+        _pairingTimer?.cancel();
+        _pairingTimer = null;
+      }
       if (decision.changesTrust) {
-        _persistTrust(forgot: decision.forgotClient != null);
+        _persistTrust();
       } else if (decision.isAccepted) {
         _persistHistory();
       }
@@ -369,11 +445,14 @@ class AgentServer {
     if (!_packets.isClosed) _packets.add(packet);
   }
 
-  PairPacket _withSessionKey(PairPacket reply) {
+  PairPacket _withSessionKey(PairPacket reply, String? secret) {
     if (reply.stage != PairStage.accepted) return reply;
     final key = DatagramSeal.newKey();
     _seal = DatagramSeal(key);
-    return PairPacket(PairStage.accepted, DatagramSeal.encodeKey(key));
+    return PairPacket(
+      PairStage.accepted,
+      PairDetail.accepted(DatagramSeal.encodeKey(key), secret: secret),
+    );
   }
 
   void _forgetClient() {
@@ -437,10 +516,14 @@ class AgentServer {
   bool _isStale(int generation) => _disposed || generation != _generation;
 
   void _emit(AgentServerState next) {
+    final listening = next.listening;
     final stamped = next.withTrust(
       phones: guard.pairedPhones,
       phoneId: guard.acceptedClient,
       forgetUnsaved: _forgetUnsaved,
+      visibleCode: guard.visibleCode,
+      pairingOpenUntil: listening ? guard.pairingOpenUntil : null,
+      pairingStopped: listening && guard.pairingStopped,
     );
     if (_state == stamped || _states.isClosed) return;
     _state = stamped;

@@ -6,9 +6,9 @@ import '../../../core/error/failure.dart';
 import '../../../data/models/device_model.dart';
 import '../../../data/repositories/device_repository.dart';
 import '../../../services/discovery/discovery.dart';
-import '../../../services/security/controller_identity.dart';
 import '../../../services/security/fingerprint_store.dart';
 import '../../../services/security/laptop_id.dart';
+import '../../../services/security/laptop_link_store.dart';
 import '../../../services/security/laptop_name.dart';
 import '../../../services/transport/bt_hid_transport.dart';
 import '../../../services/transport/transport.dart';
@@ -330,12 +330,16 @@ class ConnectCubit extends Cubit<ConnectState> {
     if (manual) _connectionError = null;
     _publish();
     try {
-      final identity = await ControllerIdentity.load();
       final pinned = await FingerprintStore.load(agent.id);
+      final link = await LaptopLinkStore.forDial(
+        agent.id,
+        pinned: pinned != null,
+      );
       if (_userDisconnected) return;
       await _transport.connect(
         TransportEndpoint(
-          clientId: identity.id,
+          clientId: link.clientId,
+          secret: link.secret,
           host: agent.host,
           label: LaptopName.shown(agent.name),
           platform: agent.platform,
@@ -531,6 +535,8 @@ class ConnectCubit extends Cubit<ConnectState> {
   Future<void> _trustAgent(DiscoveredAgent agent) async {
     final fingerprint = _transport.peerFingerprint;
     if (fingerprint == null || fingerprint.isEmpty) return;
+    final secret = _transport.issuedSecret;
+    final clientId = _transport.endpoint?.clientId;
     final dial = _dials;
     final withCode = _codeRequested;
     if (_revokedIds.contains(agent.id) && !withCode) return;
@@ -538,6 +544,13 @@ class ConnectCubit extends Cubit<ConnectState> {
     if (withCode) _codeTrustingId = agent.id;
     try {
       await FingerprintStore.remember(agent.id, fingerprint);
+      if (secret != null && clientId != null) {
+        await LaptopLinkStore.rememberSecret(
+          agent.id,
+          clientId: clientId,
+          secret: secret,
+        );
+      }
     } finally {
       if (_codeTrustingId == agent.id) _codeTrustingId = null;
     }
@@ -619,11 +632,8 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   void _onPairingError(Failure failure) {
     _connectionError = failure.message;
-    if (failure is VersionFailure) _cancelReconnect();
-    if (_transport.state == TransportState.pairing &&
-        _transport.peerFingerprint != null) {
-      _askForCode();
-    }
+    final refused = !_codeRequested && failure is! TransportFailure;
+    if (failure is VersionFailure || refused) _cancelReconnect();
     _publish();
   }
 

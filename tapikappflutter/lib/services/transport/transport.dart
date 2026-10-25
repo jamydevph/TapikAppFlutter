@@ -11,6 +11,7 @@ class TransportEndpoint {
     this.platform,
     this.fingerprint,
     required this.clientId,
+    this.secret,
     this.tcpPort = TapikappConstants.tcpPort,
     this.udpPort = TapikappConstants.udpPort,
   });
@@ -20,6 +21,7 @@ class TransportEndpoint {
   final String? platform;
   final String? fingerprint;
   final String clientId;
+  final String? secret;
   final int tcpPort;
   final int udpPort;
 }
@@ -42,6 +44,8 @@ abstract class Transport {
   Stream<void> get codeRequests;
 
   String? get peerFingerprint;
+
+  String? get issuedSecret;
 
   void send(Packet packet);
 
