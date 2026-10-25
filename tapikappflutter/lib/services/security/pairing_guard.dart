@@ -1,7 +1,10 @@
 import 'dart:math';
 
+import '../../core/protocol/pair_detail.dart';
 import '../../core/protocol/packet.dart';
+import '../../core/resources/constants.dart';
 import 'paired_phone.dart';
+import 'reconnect_secret.dart';
 
 enum PairingOutcome { pending, retry, accepted, rejected, expired }
 
@@ -10,20 +13,29 @@ class PairingDecision {
     required this.outcome,
     this.reply,
     this.rememberClient,
-    this.forgotClient,
+    this.issuedSecret,
   });
 
   final PairingOutcome outcome;
   final PairPacket? reply;
   final String? rememberClient;
-  final String? forgotClient;
+  final String? issuedSecret;
 
-  bool get changesTrust => rememberClient != null || forgotClient != null;
+  bool get changesTrust => rememberClient != null;
 
   bool get isAccepted => outcome == PairingOutcome.accepted;
 
   bool get shouldDrop =>
       outcome == PairingOutcome.rejected || outcome == PairingOutcome.expired;
+}
+
+class TrustedPhone {
+  const TrustedPhone(this.phone, this.secretHash);
+
+  final PairedPhone phone;
+  final String secretHash;
+
+  String get id => phone.id;
 }
 
 class _PeerPenalty {
@@ -36,35 +48,51 @@ class _PeerPenalty {
 
 class PairingGuard {
   PairingGuard({
-    required Set<String> trustedClients,
+    required Map<String, String> trustedClients,
     Iterable<PairedPhone> history = const [],
     this.handshakeTimeout = defaultHandshakeTimeout,
     this.codeLifetime = defaultCodeLifetime,
     this.maxAttempts = defaultMaxAttempts,
+    this.pairingWindow = defaultPairingWindow,
+    this.maxWrongCodesPerWindow = defaultMaxWrongCodesPerWindow,
     Random? random,
     DateTime Function()? clock,
-  }) : _trusted = Set<String>.of(trustedClients),
+  }) : _trusted = Map<String, String>.of(trustedClients),
        _history = {
          for (final phone in history)
-           if (trustedClients.contains(phone.id)) phone.id: phone,
+           if (trustedClients.containsKey(phone.id)) phone.id: phone,
        },
        _random = random ?? Random.secure(),
        _now = clock ?? DateTime.now;
 
   static const Duration defaultHandshakeTimeout = Duration(seconds: 30);
   static const Duration defaultCodeLifetime = Duration(seconds: 60);
+  static const Duration defaultPairingWindow = Duration(minutes: 2);
   static const int defaultMaxAttempts = 5;
+  static const int defaultMaxWrongCodesPerWindow = 5;
   static const int codeLength = 6;
   static const Duration backoffStep = Duration(seconds: 2);
   static const Duration maxBackoff = Duration(minutes: 5);
   static const Duration penaltyWindow = Duration(minutes: 10);
   static const int maxTrackedPeers = 32;
 
+  static const String outdatedPhone =
+      'This phone runs an older Tapikapp. Update it, then try again.';
+  static const String pairingClosed =
+      'On the laptop, click “Pair a phone”, then try again.';
+  static const String timedOut =
+      'Pairing timed out. Pick the laptop again for a new code.';
+  static const String pairingStoppedReason =
+      'Too many wrong codes, so pairing stopped on the laptop. '
+      'Click “Pair a phone” there to try again.';
+
   final Duration handshakeTimeout;
   final Duration codeLifetime;
   final int maxAttempts;
+  final Duration pairingWindow;
+  final int maxWrongCodesPerWindow;
 
-  final Set<String> _trusted;
+  final Map<String, String> _trusted;
   final Map<String, PairedPhone> _history;
   final Random _random;
   final DateTime Function() _now;
@@ -76,18 +104,33 @@ class PairingGuard {
   DateTime? _codeExpiry;
   DateTime? _openedAt;
   bool _accepted = false;
+  DateTime? _windowUntil;
+  int _wrongInWindow = 0;
+  bool _stopped = false;
 
-  String? get visibleCode => _accepted ? null : _code;
+  String? get visibleCode => _accepted || !isPairingOpen ? null : _code;
 
   bool get isAccepted => _accepted;
 
-  Set<String> get trustedClients => Set<String>.unmodifiable(_trusted);
+  Map<String, String> get trustedClients =>
+      Map<String, String>.unmodifiable(_trusted);
 
   String? get acceptedClient => _accepted ? _clientId : null;
 
+  bool get isPairingOpen {
+    final until = _windowUntil;
+    return until != null && _now().isBefore(until);
+  }
+
+  DateTime? get pairingOpenUntil => isPairingOpen ? _windowUntil : null;
+
+  bool get pairingStopped => _stopped;
+
+  bool get awaitsCode => !_accepted && _code != null;
+
   List<PairedPhone> get pairedPhones {
     final phones = [
-      for (final id in _trusted) _history[id] ?? PairedPhone(id: id),
+      for (final id in _trusted.keys) _history[id] ?? PairedPhone(id: id),
     ]..sort(_newestFirst);
     return List<PairedPhone>.unmodifiable(phones);
   }
@@ -115,6 +158,22 @@ class PairingGuard {
     return left.isNegative ? null : left;
   }
 
+  void openPairing() {
+    _windowUntil = _now().add(pairingWindow);
+    _wrongInWindow = 0;
+    _stopped = false;
+  }
+
+  void closePairing() {
+    _windowUntil = null;
+    _wrongInWindow = 0;
+    _stopped = false;
+    if (!_accepted) {
+      _code = null;
+      _codeExpiry = null;
+    }
+  }
+
   void open([String peer = '']) {
     _peer = peer;
     _clientId = null;
@@ -127,7 +186,7 @@ class PairingGuard {
 
   void close() {
     final client = _clientId;
-    if (_accepted && client != null && _trusted.contains(client)) {
+    if (_accepted && client != null && _trusted.containsKey(client)) {
       _seen(client);
     }
     _clientId = null;
@@ -141,7 +200,8 @@ class PairingGuard {
     if (_accepted) return false;
     final opened = _openedAt;
     if (opened == null) return false;
-    return _now().difference(opened) > handshakeTimeout;
+    final limit = _code == null ? handshakeTimeout : codeLifetime;
+    return _now().difference(opened) > limit;
   }
 
   PairingDecision onPacket(Packet packet) {
@@ -153,46 +213,73 @@ class PairingGuard {
     }
     switch (packet.stage) {
       case PairStage.hello:
-        return _onHello(packet.detail, introduce: false);
+        return _reject(outdatedPhone);
       case PairStage.introduce:
-        return _onHello(packet.detail, introduce: true);
+        return _onIntroduce(packet.detail);
+      case PairStage.resume:
+        return _onResume(packet.detail);
       case PairStage.code:
         return _onCode(packet.detail);
       case PairStage.accepted:
       case PairStage.rejected:
       case PairStage.codeRequired:
+      case PairStage.busy:
       case PairStage.forget:
         return const PairingDecision(outcome: PairingOutcome.pending);
     }
   }
 
-  PairingDecision _onHello(String clientId, {required bool introduce}) {
-    if (clientId.isEmpty) {
+  PairingDecision _onIntroduce(String detail) {
+    final parts = PairDetail.parts(detail);
+    if (!_isCurrentVersion(parts)) return _reject(outdatedPhone);
+    if (parts.length != 2 || !ReconnectSecret.isToken(parts[1])) {
       return _reject('That phone did not identify itself.');
     }
+    _clientId = parts[1];
+    return _askForCode();
+  }
+
+  PairingDecision _onResume(String detail) {
+    final parts = PairDetail.parts(detail);
+    if (!_isCurrentVersion(parts)) return _reject(outdatedPhone);
+    if (parts.length != 3 || !ReconnectSecret.isToken(parts[1])) {
+      return _reject('That phone did not identify itself.');
+    }
+    final clientId = parts[1];
     _clientId = clientId;
-    final forgot = introduce && _forget(clientId) != null ? clientId : null;
-    if (!introduce && _trusted.contains(clientId)) {
+    final expected = _trusted[clientId];
+    if (expected != null && ReconnectSecret.matches(parts[2], expected)) {
       _accepted = true;
+      closePairing();
       _seen(clientId);
-      return PairingDecision(
+      return const PairingDecision(
         outcome: PairingOutcome.accepted,
-        reply: const PairPacket(PairStage.accepted),
+        reply: PairPacket(PairStage.accepted),
       );
+    }
+    return _askForCode();
+  }
+
+  static bool _isCurrentVersion(List<String> parts) =>
+      parts.first == '${TapikappConstants.protocolVersion}';
+
+  PairingDecision _askForCode() {
+    if (!isPairingOpen) {
+      return _reject(_stopped ? pairingStoppedReason : pairingClosed);
     }
     final blocked = blockedFor;
     if (blocked != null) {
       return _reject(
         'Too many wrong codes. Try again in ${blocked.inSeconds + 1} seconds.',
-        forgotClient: forgot,
       );
     }
+    final now = _now();
     _code = _newCode();
-    _codeExpiry = _now().add(codeLifetime);
-    return PairingDecision(
+    _openedAt = now;
+    _codeExpiry = now.add(codeLifetime);
+    return const PairingDecision(
       outcome: PairingOutcome.pending,
-      reply: const PairPacket(PairStage.codeRequired),
-      forgotClient: forgot,
+      reply: PairPacket(PairStage.codeRequired),
     );
   }
 
@@ -202,11 +289,12 @@ class PairingGuard {
     return _forget(client) != null ? client : null;
   }
 
-  PairedPhone? forgetClient(String clientId) => _forget(clientId);
+  TrustedPhone? forgetClient(String clientId) => _forget(clientId);
 
-  void restore(PairedPhone phone) {
-    if (!_trusted.add(phone.id)) return;
-    _history[phone.id] = phone;
+  void restore(TrustedPhone trusted) {
+    if (_trusted.containsKey(trusted.id)) return;
+    _trusted[trusted.id] = trusted.secretHash;
+    _history[trusted.id] = trusted.phone;
   }
 
   int forgetAllClients() {
@@ -216,9 +304,11 @@ class PairingGuard {
     return forgotten;
   }
 
-  PairedPhone? _forget(String clientId) {
-    if (!_trusted.remove(clientId)) return null;
-    return _history.remove(clientId) ?? PairedPhone(id: clientId);
+  TrustedPhone? _forget(String clientId) {
+    final hash = _trusted.remove(clientId);
+    if (hash == null) return null;
+    final phone = _history.remove(clientId) ?? PairedPhone(id: clientId);
+    return TrustedPhone(phone, hash);
   }
 
   void _seen(String clientId) {
@@ -229,6 +319,11 @@ class PairingGuard {
   PairingDecision _onCode(String entered) {
     final expected = _code;
     final expiry = _codeExpiry;
+    if (!isPairingOpen) {
+      _code = null;
+      _codeExpiry = null;
+      return _reject(_stopped ? pairingStoppedReason : pairingClosed);
+    }
     if (expected == null || expiry == null) {
       return _reject('Start pairing from the phone first.');
     }
@@ -255,6 +350,12 @@ class PairingGuard {
       if (penalty.attempts >= maxAttempts) {
         penalty.blockedUntil = _now().add(_backoff(penalty.attempts));
       }
+      _wrongInWindow += 1;
+      if (_wrongInWindow >= maxWrongCodesPerWindow) {
+        closePairing();
+        _stopped = true;
+        return _reject(pairingStoppedReason);
+      }
       return PairingDecision(
         outcome: PairingOutcome.retry,
         reply: const PairPacket(
@@ -267,20 +368,23 @@ class PairingGuard {
     _penalties.remove(_peer);
     _code = null;
     _codeExpiry = null;
+    closePairing();
     final paired = _clientId;
-    if (paired != null) {
-      final now = _now();
-      _trusted.add(paired);
-      _history[paired] = PairedPhone(
-        id: paired,
-        pairedAt: now,
-        lastSeenAt: now,
+    if (paired == null) {
+      return const PairingDecision(
+        outcome: PairingOutcome.accepted,
+        reply: PairPacket(PairStage.accepted),
       );
     }
+    final secret = ReconnectSecret.generate(_random);
+    final now = _now();
+    _trusted[paired] = ReconnectSecret.hash(secret);
+    _history[paired] = PairedPhone(id: paired, pairedAt: now, lastSeenAt: now);
     return PairingDecision(
       outcome: PairingOutcome.accepted,
       reply: const PairPacket(PairStage.accepted),
       rememberClient: paired,
+      issuedSecret: secret,
     );
   }
 
@@ -321,11 +425,10 @@ class PairingGuard {
     }
   }
 
-  PairingDecision _reject(String reason, {String? forgotClient}) {
+  PairingDecision _reject(String reason) {
     return PairingDecision(
       outcome: PairingOutcome.rejected,
       reply: PairPacket(PairStage.rejected, reason),
-      forgotClient: forgotClient,
     );
   }
 
@@ -335,10 +438,5 @@ class PairingGuard {
       buffer.write(_random.nextInt(10));
     }
     return buffer.toString();
-  }
-
-  void trust(String clientId) {
-    if (clientId.isEmpty) return;
-    _trusted.add(clientId);
   }
 }

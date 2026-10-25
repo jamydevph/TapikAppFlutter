@@ -5,11 +5,13 @@ import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
+import 'package:tapikappflutter/services/security/reconnect_secret.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
 
 const String _phone = 'latency-scratch-phone';
+const String _secret = 'scratch-secret';
 const int _encodeRuns = 200000;
 const int _tcpSamples = 200;
 const int _udpSamples = 500;
@@ -73,7 +75,9 @@ Future<void> main() async {
   final ports = await _freePorts();
   final agent = AgentServer(
     certificate: certificate,
-    guard: PairingGuard(trustedClients: const {_phone}),
+    guard: PairingGuard(
+      trustedClients: {_phone: ReconnectSecret.hash(_secret)},
+    ),
     tcpPort: ports.$1,
     udpPort: ports.$2,
   );
@@ -94,6 +98,7 @@ Future<void> main() async {
       tcpPort: ports.$1,
       udpPort: ports.$2,
       fingerprint: certificate.fingerprint,
+      secret: _secret,
     ),
   );
   await Future<void>.delayed(const Duration(milliseconds: 500));

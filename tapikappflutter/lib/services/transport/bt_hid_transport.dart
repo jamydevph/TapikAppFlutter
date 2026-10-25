@@ -80,6 +80,9 @@ class BtHidTransport implements Transport {
   @override
   String? get peerFingerprint => null;
 
+  @override
+  String? get issuedSecret => null;
+
   int get skippedCharacters => _reports.skippedCharacters;
 
   Stream<void> get hostsChanged => _hostsChanged.stream;

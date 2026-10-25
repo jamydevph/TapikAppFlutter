@@ -3,14 +3,17 @@ import 'dart:io';
 
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
+import 'package:tapikappflutter/core/protocol/pair_detail.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
 import 'package:tapikappflutter/services/security/datagram_seal.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
+import 'package:tapikappflutter/services/security/reconnect_secret.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
 
 const String _phone = 'resilience-scratch-phone';
+const String _secret = 'scratch-secret';
 
 var _passed = 0;
 var _failed = 0;
@@ -42,7 +45,9 @@ Future<void> main() async {
   final ports = await _freePorts();
   final agent = AgentServer(
     certificate: certificate,
-    guard: PairingGuard(trustedClients: const {_phone}),
+    guard: PairingGuard(
+      trustedClients: {_phone: ReconnectSecret.hash(_secret)},
+    ),
     peerTimeout: const Duration(seconds: 1),
     tcpPort: ports.$1,
     udpPort: ports.$2,
@@ -62,6 +67,7 @@ Future<void> main() async {
       tcpPort: ports.$1,
       udpPort: ports.$2,
       fingerprint: certificate.fingerprint,
+      secret: _secret,
     ),
   );
   await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -94,7 +100,9 @@ Future<void> main() async {
   final deadPorts = await _freePorts();
   final lonely = AgentServer(
     certificate: certificate,
-    guard: PairingGuard(trustedClients: const {_phone}),
+    guard: PairingGuard(
+      trustedClients: {_phone: ReconnectSecret.hash(_secret)},
+    ),
     peerTimeout: const Duration(seconds: 1),
     tcpPort: deadPorts.$1,
     udpPort: deadPorts.$2,
@@ -108,7 +116,11 @@ Future<void> main() async {
     deadPorts.$1,
     onBadCertificate: (_) => true,
   );
-  socket.add(PacketCodec.encode(const PairPacket(PairStage.hello, _phone)));
+  socket.add(
+    PacketCodec.encode(
+      PairPacket(PairStage.resume, PairDetail.resume(_phone, _secret)),
+    ),
+  );
   await socket.flush();
   await Future<void>.delayed(const Duration(milliseconds: 400));
   _check('the laptop has a paired phone', lonely.state.hasClient, true);
@@ -174,6 +186,7 @@ Future<void> main() async {
       tcpPort: mutePorts.$1,
       udpPort: mutePorts.$2,
       fingerprint: certificate.fingerprint,
+      secret: _secret,
     ),
   );
   await Future<void>.delayed(const Duration(milliseconds: 400));

@@ -11,6 +11,8 @@ class AgentState extends Equatable {
     this.laptopId,
     this.listening = false,
     this.pairingCode,
+    this.pairingOpenUntil,
+    this.pairingStopped = false,
     this.connectedPhone,
     this.connectedPhoneId,
     this.phones = const [],
@@ -28,6 +30,8 @@ class AgentState extends Equatable {
   final String? laptopId;
   final bool listening;
   final String? pairingCode;
+  final DateTime? pairingOpenUntil;
+  final bool pairingStopped;
   final String? connectedPhone;
   final String? connectedPhoneId;
   final List<PairedPhone> phones;
@@ -45,6 +49,8 @@ class AgentState extends Equatable {
   AgentState copyWith({
     bool? listening,
     String? Function()? pairingCode,
+    DateTime? Function()? pairingOpenUntil,
+    bool? pairingStopped,
     String? Function()? connectedPhone,
     String? Function()? connectedPhoneId,
     List<PairedPhone>? phones,
@@ -62,6 +68,10 @@ class AgentState extends Equatable {
       laptopId: laptopId,
       listening: listening ?? this.listening,
       pairingCode: pairingCode == null ? this.pairingCode : pairingCode(),
+      pairingOpenUntil: pairingOpenUntil == null
+          ? this.pairingOpenUntil
+          : pairingOpenUntil(),
+      pairingStopped: pairingStopped ?? this.pairingStopped,
       connectedPhone: connectedPhone == null
           ? this.connectedPhone
           : connectedPhone(),
@@ -86,6 +96,8 @@ class AgentState extends Equatable {
     laptopId,
     listening,
     pairingCode,
+    pairingOpenUntil,
+    pairingStopped,
     connectedPhone,
     connectedPhoneId,
     phones,

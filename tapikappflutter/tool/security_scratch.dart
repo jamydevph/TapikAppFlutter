@@ -7,17 +7,24 @@ import 'package:tapikappflutter/core/error/failure.dart';
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/core/protocol/packet_buffer.dart';
+import 'package:tapikappflutter/core/protocol/pair_detail.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
 import 'package:tapikappflutter/services/security/datagram_seal.dart';
 import 'package:tapikappflutter/services/security/laptop_id.dart';
 import 'package:tapikappflutter/services/security/laptop_name.dart';
 import 'package:tapikappflutter/services/security/paired_phone.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
+import 'package:tapikappflutter/services/security/reconnect_secret.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
 
 const String _phone = 'security-scratch-phone';
+const String _secret = 'scratch-secret';
+
+Map<String, String> _trust(Set<String> ids) => {
+  for (final id in ids) id: ReconnectSecret.hash(_secret),
+};
 
 var _passed = 0;
 var _failed = 0;
@@ -81,6 +88,29 @@ Future<SecureServerSocket> _lenientImpostor(
           }
         }
       },
+      onError: (Object _) => socket.destroy(),
+      onDone: socket.destroy,
+    );
+  }, onError: (Object _) {});
+  return server;
+}
+
+Future<SecureServerSocket> _recordingImpostor(
+  AgentCertificate certificate,
+  List<PairPacket> heard,
+) async {
+  final server = await SecureServerSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+    SecurityContext(withTrustedRoots: false)
+      ..useCertificateChainBytes(utf8.encode(certificate.certificatePem))
+      ..usePrivateKeyBytes(utf8.encode(certificate.privateKeyPem)),
+  );
+  server.listen((socket) {
+    unawaited(socket.done.catchError((Object _) => socket));
+    final buffer = PacketBuffer();
+    socket.listen(
+      (chunk) => heard.addAll(buffer.add(chunk).whereType<PairPacket>()),
       onError: (Object _) => socket.destroy(),
       onDone: socket.destroy,
     );
@@ -312,7 +342,7 @@ Future<void> main() async {
   final ports = await _freePorts();
   final agent = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {_phone}),
+    guard: PairingGuard(trustedClients: _trust({_phone})),
     tcpPort: ports.$1,
     udpPort: ports.$2,
   );
@@ -326,6 +356,7 @@ Future<void> main() async {
       tcpPort: ports.$1,
       udpPort: ports.$2,
       fingerprint: mine.fingerprint,
+      secret: _secret,
     ),
   );
   await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -497,6 +528,7 @@ ${mine.certificatePem.trim()}
         tcpPort: chained.port,
         udpPort: ports.$2,
         fingerprint: mine.fingerprint,
+        secret: _secret,
       ),
     );
   } catch (error) {
@@ -516,11 +548,12 @@ ${mine.certificatePem.trim()}
   final tofuPorts = await _freePorts();
   final tofuAgent = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {}),
+    guard: PairingGuard(trustedClients: _trust({})),
     tcpPort: tofuPorts.$1,
     udpPort: tofuPorts.$2,
   );
   await tofuAgent.start();
+  tofuAgent.openPairing();
   final unpinned = NetworkTransport();
   await unpinned.connect(
     TransportEndpoint(
@@ -551,11 +584,26 @@ ${mine.certificatePem.trim()}
     captured,
     mine.fingerprint,
   );
+  final issued = unpinned.issuedSecret;
+  _check(
+    'and gets the reconnect secret the laptop now trusts',
+    [
+      issued != null,
+      tofuAgent.guard.trustedClients[_phone] ==
+          ReconnectSecret.hash(issued ?? ''),
+    ],
+    [true, true],
+  );
+  _check(
+    'pairing on the laptop closes once the phone is in',
+    tofuAgent.state.isPairingOpen,
+    false,
+  );
   await unpinned.disconnect();
   _check(
-    'which is forgotten when the link drops',
-    unpinned.peerFingerprint,
-    null,
+    'which are both forgotten when the link drops',
+    [unpinned.peerFingerprint, unpinned.issuedSecret],
+    [null, null],
   );
   await unpinned.dispose();
 
@@ -567,16 +615,65 @@ ${mine.certificatePem.trim()}
       tcpPort: tofuPorts.$1,
       udpPort: tofuPorts.$2,
       fingerprint: captured,
+      secret: issued,
     ),
   );
   await Future<void>.delayed(const Duration(milliseconds: 400));
   _check(
-    'coming back with the learned fingerprint connects',
-    returning.state,
-    TransportState.connected,
+    'coming back with the learned fingerprint and secret connects, '
+    'with pairing closed',
+    [returning.state, tofuAgent.state.isPairingOpen],
+    [TransportState.connected, false],
   );
   await returning.disconnect();
   await returning.dispose();
+
+  final replayer = NetworkTransport();
+  final replayErrors = <Failure>[];
+  replayer.pairingErrors.listen(replayErrors.add);
+  await replayer.connect(
+    TransportEndpoint(
+      clientId: _phone,
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: tofuPorts.$1,
+      udpPort: tofuPorts.$2,
+      fingerprint: captured,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'someone who learned only the phone id is not let in',
+    [replayer.state, replayErrors.lastOrNull?.message],
+    [TransportState.disconnected, PairingGuard.pairingClosed],
+  );
+  await replayer.dispose();
+
+  final oldHello = await SecureSocket.connect(
+    InternetAddress.loopbackIPv4.address,
+    tofuPorts.$1,
+    onBadCertificate: (_) => true,
+  );
+  final helloReplies = PacketBuffer();
+  final helloSeen = <Packet>[];
+  oldHello.listen(
+    (bytes) => helloSeen.addAll(helloReplies.add(bytes)),
+    onError: (Object _) {},
+  );
+  oldHello.add(PacketCodec.encode(const PairPacket(PairStage.hello, _phone)));
+  await oldHello.flush();
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'and a v3 hello with that id is refused outright',
+    [
+      helloSeen.whereType<PairPacket>().map((p) => p.stage).toList(),
+      tofuAgent.state.hasClient,
+    ],
+    [
+      [PairStage.rejected],
+      false,
+    ],
+  );
+  oldHello.destroy();
   await tofuAgent.dispose();
 
   final impostor = AgentCertificate(
@@ -586,7 +683,7 @@ ${mine.certificatePem.trim()}
   final swapPorts = await _freePorts();
   final swapped = AgentServer(
     certificate: impostor,
-    guard: PairingGuard(trustedClients: const {_phone}),
+    guard: PairingGuard(trustedClients: _trust({_phone})),
     tcpPort: swapPorts.$1,
     udpPort: swapPorts.$2,
   );
@@ -623,10 +720,10 @@ ${mine.certificatePem.trim()}
   stdout.writeln('');
   stdout.writeln('revoking a laptop makes it forget the phone');
   final revokePorts = await _freePorts();
-  var persisted = <String>{_phone};
+  var persisted = _trust({_phone});
   final revoked = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {_phone}),
+    guard: PairingGuard(trustedClients: _trust({_phone})),
     rememberClients: (clients) async => persisted = clients,
     tcpPort: revokePorts.$1,
     udpPort: revokePorts.$2,
@@ -640,6 +737,7 @@ ${mine.certificatePem.trim()}
     tcpPort: revokePorts.$1,
     udpPort: revokePorts.$2,
     fingerprint: mine.fingerprint,
+    secret: _secret,
   );
   final leaving = NetworkTransport();
   await leaving.connect(pinned);
@@ -658,7 +756,7 @@ ${mine.certificatePem.trim()}
   );
   _check(
     'the laptop no longer trusts that phone',
-    revoked.guard.trustedClients.contains(_phone),
+    revoked.guard.trustedClients.containsKey(_phone),
     false,
   );
   _check('and saves that, so a restart keeps it', persisted.isEmpty, true);
@@ -670,11 +768,22 @@ ${mine.certificatePem.trim()}
   );
   await leaving.dispose();
 
+  final turnedAway = NetworkTransport();
+  await turnedAway.connect(pinned);
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'coming back after that is turned away while pairing is closed',
+    turnedAway.state,
+    TransportState.disconnected,
+  );
+  await turnedAway.dispose();
+
+  revoked.openPairing();
   final back = NetworkTransport();
   await back.connect(pinned);
   await Future<void>.delayed(const Duration(milliseconds: 400));
   _check(
-    'coming back after that needs the code again',
+    'and needs the code again once pairing is open',
     back.state,
     TransportState.pairing,
   );
@@ -683,7 +792,7 @@ ${mine.certificatePem.trim()}
 
   final unsavedRevoke = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {_phone}),
+    guard: PairingGuard(trustedClients: _trust({_phone})),
     rememberClients: (_) async => throw const DataFailure('disk full'),
     tcpPort: revokePorts.$1,
     udpPort: revokePorts.$2,
@@ -703,7 +812,7 @@ ${mine.certificatePem.trim()}
     'if saving a phone’s own forget fails, the window warns instead of '
     'staying quiet',
     [
-      unsavedRevoke.guard.trustedClients.contains(_phone),
+      unsavedRevoke.guard.trustedClients.containsKey(_phone),
       unsavedRevoke.state.forgetUnsaved,
     ],
     [false, true],
@@ -716,15 +825,16 @@ ${mine.certificatePem.trim()}
     'a phone that lost its pin pairs again instead of being locked out',
   );
   final lostPorts = await _freePorts();
-  var saved = <String>{_phone};
+  var saved = _trust({_phone});
   final stale = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {_phone}),
+    guard: PairingGuard(trustedClients: _trust({_phone})),
     rememberClients: (clients) async => saved = clients,
     tcpPort: lostPorts.$1,
     udpPort: lostPorts.$2,
   );
   await stale.start();
+  stale.openPairing();
   final fresh = NetworkTransport();
   final freshErrors = <Failure>[];
   fresh.pairingErrors.listen(freshErrors.add);
@@ -744,11 +854,11 @@ ${mine.certificatePem.trim()}
   );
   _check('instead of letting it in and getting refused', freshErrors.length, 0);
   _check(
-    'the laptop drops its old trust first',
-    stale.guard.trustedClients.contains(_phone),
-    false,
+    'the old trust stays until the code is typed, so introducing cannot '
+    'un-pair a phone',
+    [stale.guard.trustedClients[_phone], saved[_phone]],
+    [ReconnectSecret.hash(_secret), ReconnectSecret.hash(_secret)],
   );
-  _check('and saves that', saved.isEmpty, true);
   fresh.submitPairingCode(stale.guard.visibleCode!);
   await Future<void>.delayed(const Duration(milliseconds: 400));
   _check(
@@ -756,7 +866,11 @@ ${mine.certificatePem.trim()}
     fresh.state,
     TransportState.connected,
   );
-  _check('and the laptop trusts it again', saved.contains(_phone), true);
+  _check(
+    'and the laptop saves the new secret in place of the old one',
+    saved[_phone],
+    ReconnectSecret.hash(fresh.issuedSecret ?? ''),
+  );
   _check(
     'and the phone learns the certificate again',
     fresh.peerFingerprint,
@@ -768,10 +882,10 @@ ${mine.certificatePem.trim()}
   stdout.writeln('');
   stdout.writeln('an unpaired phone cannot send input');
   final strictPorts = await _freePorts();
-  var remembered = const <String>{};
+  var remembered = const <String, String>{};
   final strict = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {}),
+    guard: PairingGuard(trustedClients: _trust({})),
     rememberClients: (clients) async => remembered = clients,
     tcpPort: strictPorts.$1,
     udpPort: strictPorts.$2,
@@ -779,6 +893,7 @@ ${mine.certificatePem.trim()}
   final delivered = <Packet>[];
   strict.packets.listen(delivered.add);
   await strict.start();
+  strict.openPairing();
 
   final stranger = NetworkTransport();
   final verdicts = <TransportState>[];
@@ -790,6 +905,7 @@ ${mine.certificatePem.trim()}
       tcpPort: strictPorts.$1,
       udpPort: strictPorts.$2,
       fingerprint: mine.fingerprint,
+      secret: _secret,
     ),
   );
   await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -833,7 +949,9 @@ ${mine.certificatePem.trim()}
   );
   await Future<void>.delayed(const Duration(milliseconds: 300));
   _check('and now its keystrokes arrive', delivered.length, 1);
-  _check('the phone is remembered for next time', remembered, {'stranger'});
+  _check('the phone is remembered for next time', remembered.keys.toList(), [
+    'stranger',
+  ]);
   _check(
     'and is now reported as the connected phone',
     strict.state.client != null,
@@ -906,7 +1024,7 @@ ${mine.certificatePem.trim()}
   final earlyPorts = await _freePorts();
   final early = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {}),
+    guard: PairingGuard(trustedClients: _trust({})),
     tcpPort: earlyPorts.$1,
     udpPort: earlyPorts.$2,
   );
@@ -1005,11 +1123,11 @@ ${mine.certificatePem.trim()}
   stdout.writeln('');
   stdout.writeln('the laptop can forget every phone at once');
   final wipePorts = await _freePorts();
-  var wipeSaved = <String>{_phone, 'second-phone'};
+  var wipeSaved = _trust({_phone, 'second-phone'});
   var wipeSaves = 0;
   final wiping = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {_phone, 'second-phone'}),
+    guard: PairingGuard(trustedClients: _trust({_phone, 'second-phone'})),
     rememberClients: (clients) async {
       await Future<void>.delayed(const Duration(milliseconds: 150));
       wipeSaves += 1;
@@ -1035,9 +1153,9 @@ ${mine.certificatePem.trim()}
   );
   await Future<void>.delayed(const Duration(milliseconds: 400));
   _check(
-    'a phone that pairs from scratch drops out of the count',
+    'an introduction alone no longer drops a phone from the count',
     [wiping.state.pairedPhones, wipeSaves],
-    [1, 1],
+    [2, 0],
   );
   await fromScratch.dispose();
   await Future<void>.delayed(const Duration(milliseconds: 300));
@@ -1047,6 +1165,7 @@ ${mine.certificatePem.trim()}
     tcpPort: wipePorts.$1,
     udpPort: wipePorts.$2,
     fingerprint: mine.fingerprint,
+    secret: _secret,
   );
   final wipedPhone = NetworkTransport();
   await wipedPhone.connect(wipeEndpoint);
@@ -1060,7 +1179,7 @@ ${mine.certificatePem.trim()}
   _check(
     'forgetting all phones finishes only once the cleared list is saved',
     [wipeSaved.isEmpty, wipeSaves],
-    [true, 2],
+    [true, 1],
   );
   await Future<void>.delayed(const Duration(milliseconds: 400));
   _check(
@@ -1074,6 +1193,7 @@ ${mine.certificatePem.trim()}
     [false, TransportState.disconnected],
   );
   await wipedPhone.dispose();
+  wiping.openPairing();
   final returningPhone = NetworkTransport();
   await returningPhone.connect(wipeEndpoint);
   await Future<void>.delayed(const Duration(milliseconds: 400));
@@ -1090,14 +1210,14 @@ ${mine.certificatePem.trim()}
     [returningPhone.state, wiping.guard.visibleCode == shownCode],
     [TransportState.pairing, true],
   );
-  _check('and saves again, so a save that failed can be retried', wipeSaves, 3);
+  _check('and saves again, so a save that failed can be retried', wipeSaves, 2);
   await returningPhone.dispose();
   await wiping.dispose();
 
   var unsavedAttempts = 0;
   final unsaved = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {_phone}),
+    guard: PairingGuard(trustedClients: _trust({_phone})),
     rememberClients: (_) async {
       unsavedAttempts += 1;
       if (unsavedAttempts == 1) throw const DataFailure('disk full');
@@ -1132,12 +1252,12 @@ ${mine.certificatePem.trim()}
 
   stdout.writeln('');
   stdout.writeln('the laptop can forget one phone and keep the rest');
-  var oneSaved = <String>{_phone, 'second-phone'};
+  var oneSaved = _trust({_phone, 'second-phone'});
   var oneHistory = <PairedPhone>[];
   final single = AgentServer(
     certificate: mine,
     guard: PairingGuard(
-      trustedClients: const {_phone, 'second-phone'},
+      trustedClients: _trust({_phone, 'second-phone'}),
       history: [
         PairedPhone(
           id: 'second-phone',
@@ -1183,7 +1303,7 @@ ${mine.certificatePem.trim()}
   );
   _check(
     'and saves the trust without it',
-    [oneSaved.length, oneSaved.contains(_phone), single.state.pairedPhones],
+    [oneSaved.length, oneSaved.containsKey(_phone), single.state.pairedPhones],
     [1, true, 1],
   );
   _check(
@@ -1215,7 +1335,7 @@ ${mine.certificatePem.trim()}
   final stubborn = AgentServer(
     certificate: mine,
     guard: PairingGuard(
-      trustedClients: const {_phone, 'second-phone'},
+      trustedClients: _trust({_phone, 'second-phone'}),
       history: [PairedPhone(id: 'second-phone', pairedAt: DateTime(2026, 9))],
     ),
     rememberClients: (_) async => throw const DataFailure('disk full'),
@@ -1247,7 +1367,7 @@ ${mine.certificatePem.trim()}
   var raceSaves = 0;
   final racing = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {_phone, 'second-phone'}),
+    guard: PairingGuard(trustedClients: _trust({_phone, 'second-phone'})),
     rememberClients: (_) async {
       raceSaves += 1;
       if (raceSaves > 1) return;
@@ -1281,7 +1401,7 @@ ${mine.certificatePem.trim()}
     var saves = 0;
     final server = AgentServer(
       certificate: mine,
-      guard: PairingGuard(trustedClients: const {_phone, 'b', 'c'}),
+      guard: PairingGuard(trustedClients: _trust({_phone, 'b', 'c'})),
       rememberClients: (_) async {
         saves += 1;
         final first = saves == 1;
@@ -1307,8 +1427,8 @@ ${mine.certificatePem.trim()}
     'they were not saved instead of quietly dropping one',
     [
       bothFail.state.forgetUnsaved,
-      bothFail.guard.trustedClients.contains('b'),
-      bothFail.guard.trustedClients.contains('c'),
+      bothFail.guard.trustedClients.containsKey('b'),
+      bothFail.guard.trustedClients.containsKey('c'),
     ],
     [true, false, true],
   );
@@ -1326,7 +1446,7 @@ ${mine.certificatePem.trim()}
   final keyPorts = await _freePorts();
   final keyed = AgentServer(
     certificate: mine,
-    guard: PairingGuard(trustedClients: const {_phone}),
+    guard: PairingGuard(trustedClients: _trust({_phone})),
     peerTimeout: const Duration(seconds: 1),
     tcpPort: keyPorts.$1,
     udpPort: keyPorts.$2,
@@ -1499,6 +1619,320 @@ ${mine.certificatePem.trim()}
   await keyless.close();
 
   stdout.writeln('');
+  stdout.writeln('the reconnect secret only ever goes to the pinned laptop');
+  final overheard = <PairPacket>[];
+  final eavesdropper = await _recordingImpostor(other, overheard);
+  final careful = NetworkTransport();
+  Object? carefulRefusal;
+  try {
+    await careful.connect(
+      TransportEndpoint(
+        clientId: _phone,
+        host: InternetAddress.loopbackIPv4.address,
+        tcpPort: eavesdropper.port,
+        fingerprint: mine.fingerprint,
+        secret: _secret,
+      ),
+    );
+  } catch (error) {
+    carefulRefusal = error;
+  }
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'a laptop with the wrong certificate hears nothing, not even the id',
+    [carefulRefusal is Failure, overheard.length],
+    [true, 0],
+  );
+  await careful.dispose();
+  final newcomer = NetworkTransport();
+  await newcomer.connect(
+    TransportEndpoint(
+      clientId: 'fresh-link-id',
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: eavesdropper.port,
+      secret: _secret,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'a phone with no pin only introduces itself, with no secret',
+    overheard.map((p) => [p.stage, p.detail]).toList(),
+    [
+      [PairStage.introduce, PairDetail.introduce('fresh-link-id')],
+    ],
+  );
+  await newcomer.dispose();
+  await eavesdropper.close();
+
+  stdout.writeln('');
+  stdout.writeln('the pairing window on the laptop');
+  final windowPorts = await _freePorts();
+  final windowed = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(
+      trustedClients: _trust({}),
+      pairingWindow: const Duration(milliseconds: 700),
+    ),
+    tcpPort: windowPorts.$1,
+    udpPort: windowPorts.$2,
+  );
+  final windowStates = <AgentServerState>[];
+  windowed.states.listen(windowStates.add);
+  windowed.openPairing();
+  _check(
+    'pairing cannot be opened before the agent listens',
+    windowed.state.isPairingOpen,
+    false,
+  );
+  await windowed.start();
+  windowed.openPairing();
+  _check(
+    'opening pairing is published with its end time',
+    windowed.state.pairingOpenUntil != null,
+    true,
+  );
+  final waiter = NetworkTransport();
+  final waiterErrors = <String>[];
+  waiter.pairingErrors.listen((failure) => waiterErrors.add(failure.message));
+  await waiter.connect(
+    TransportEndpoint(
+      clientId: 'window-phone',
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: windowPorts.$1,
+      udpPort: windowPorts.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 200));
+  _check(
+    'a new phone gets a code while it is open',
+    [waiter.state, windowed.state.pairingCode != null],
+    [TransportState.pairing, true],
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 900));
+  _check(
+    'when the window runs out, the code goes and the waiting phone is let go',
+    [
+      windowed.state.isPairingOpen,
+      windowed.state.pairingCode,
+      waiter.state,
+      waiterErrors.lastOrNull,
+    ],
+    [false, null, TransportState.disconnected, PairingGuard.pairingClosed],
+  );
+  await waiter.dispose();
+  windowed.openPairing();
+  final stopper = NetworkTransport();
+  final stopperErrors = <String>[];
+  stopper.pairingErrors.listen((failure) => stopperErrors.add(failure.message));
+  await stopper.connect(
+    TransportEndpoint(
+      clientId: 'window-phone',
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: windowPorts.$1,
+      udpPort: windowPorts.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 200));
+  windowed.closePairing();
+  await Future<void>.delayed(const Duration(milliseconds: 200));
+  _check(
+    'Stop pairing also lets go of a phone that is waiting for its code',
+    [windowed.state.isPairingOpen, stopper.state, stopperErrors.lastOrNull],
+    [false, TransportState.disconnected, PairingGuard.pairingClosed],
+  );
+  await stopper.dispose();
+  await windowed.stop();
+  await Future<void>.delayed(const Duration(milliseconds: 100));
+  _check(
+    'stopping the agent closes pairing',
+    [windowed.state.isPairingOpen, windowStates.last.isPairingOpen],
+    [false, false],
+  );
+  await windowed.dispose();
+
+  final capPorts = await _freePorts();
+  final capped = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: _trust({})),
+    tcpPort: capPorts.$1,
+    udpPort: capPorts.$2,
+  );
+  await capped.start();
+  capped.openPairing();
+  final guesses = <String>[];
+  for (var i = 0; i < PairingGuard.defaultMaxWrongCodesPerWindow; i++) {
+    final guesser = NetworkTransport();
+    guesser.pairingErrors.listen((failure) => guesses.add(failure.message));
+    await guesser.connect(
+      TransportEndpoint(
+        clientId: 'guesser-$i',
+        host: InternetAddress.loopbackIPv4.address,
+        tcpPort: capPorts.$1,
+        udpPort: capPorts.$2,
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 100));
+    guesser.submitPairingCode('999999');
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    await guesser.dispose();
+  }
+  await Future<void>.delayed(const Duration(milliseconds: 100));
+  _check(
+    'five wrong codes over five connections stop pairing and say so',
+    [
+      capped.state.isPairingOpen,
+      capped.state.pairingStopped,
+      guesses.contains(PairingGuard.pairingStoppedReason),
+    ],
+    [false, true, true],
+  );
+  capped.openPairing();
+  _check(
+    'opening it again clears the stop',
+    capped.state.pairingStopped,
+    false,
+  );
+  await capped.dispose();
+
+  final busyPorts = await _freePorts();
+  final busy = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: _trust({_phone})),
+    tcpPort: busyPorts.$1,
+    udpPort: busyPorts.$2,
+  );
+  await busy.start();
+  busy.openPairing();
+  final owner = NetworkTransport();
+  await owner.connect(
+    TransportEndpoint(
+      clientId: _phone,
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: busyPorts.$1,
+      udpPort: busyPorts.$2,
+      fingerprint: mine.fingerprint,
+      secret: _secret,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'a paired phone reconnecting closes an open pairing window',
+    [owner.state, busy.state.isPairingOpen],
+    [TransportState.connected, false],
+  );
+  final latecomer = NetworkTransport();
+  final latecomerErrors = <String>[];
+  latecomer.pairingErrors.listen(
+    (failure) => latecomerErrors.add(failure.message),
+  );
+  await latecomer.connect(
+    TransportEndpoint(
+      clientId: 'second-phone',
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: busyPorts.$1,
+      udpPort: busyPorts.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  _check(
+    'a second phone is told the laptop is busy instead of hanging up silently',
+    [latecomer.state, latecomerErrors.lastOrNull, owner.state],
+    [
+      TransportState.disconnected,
+      AgentServer.phoneAlreadyConnected,
+      TransportState.connected,
+    ],
+  );
+  await latecomer.dispose();
+  await owner.dispose();
+  await busy.dispose();
+
+  final retryPorts = await _freePorts();
+  final retrying = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(
+      trustedClients: _trust({}),
+      handshakeTimeout: const Duration(seconds: 1),
+      codeLifetime: const Duration(seconds: 2),
+      pairingWindow: const Duration(milliseconds: 1500),
+      maxWrongCodesPerWindow: 2,
+    ),
+    tcpPort: retryPorts.$1,
+    udpPort: retryPorts.$2,
+  );
+  await retrying.start();
+  retrying.openPairing();
+  final typist = NetworkTransport();
+  var asked = 0;
+  final typistErrors = <Failure>[];
+  typist.codeRequests.listen((_) => asked += 1);
+  typist.pairingErrors.listen(typistErrors.add);
+  await typist.connect(
+    TransportEndpoint(
+      clientId: 'typist',
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: retryPorts.$1,
+      udpPort: retryPorts.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 200));
+  typist.submitPairingCode('999999');
+  await Future<void>.delayed(const Duration(milliseconds: 200));
+  _check(
+    'a wrong code is answered with the reason and a fresh request for the '
+    'code, so the phone asks again',
+    [asked, typistErrors.lastOrNull?.message, typist.state],
+    [
+      2,
+      'That code does not match the one on the laptop.',
+      TransportState.pairing,
+    ],
+  );
+  typist.submitPairingCode('999999');
+  await Future<void>.delayed(const Duration(milliseconds: 200));
+  _check(
+    'the last allowed wrong code stops pairing without asking again',
+    [asked, typistErrors.lastOrNull?.message, typist.state],
+    [2, PairingGuard.pairingStoppedReason, TransportState.disconnected],
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 1600));
+  _check(
+    'the stop stays on the laptop after the window would have ended',
+    [retrying.state.pairingStopped, retrying.state.isPairingOpen],
+    [true, false],
+  );
+  await typist.dispose();
+  retrying.openPairing();
+  final slow = NetworkTransport();
+  final slowErrors = <Failure>[];
+  slow.pairingErrors.listen(slowErrors.add);
+  await slow.connect(
+    TransportEndpoint(
+      clientId: 'slow-typist',
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: retryPorts.$1,
+      udpPort: retryPorts.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 1300));
+  _check(
+    'a phone still on the code page after the handshake timeout keeps its code',
+    slow.state,
+    TransportState.pairing,
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 1800));
+  _check(
+    'and when the code runs out it is told why before the laptop hangs up',
+    [slow.state, slowErrors.map((f) => f.message).toList()],
+    [
+      TransportState.disconnected,
+      [PairingGuard.pairingClosed],
+    ],
+  );
+  await slow.dispose();
+  await retrying.dispose();
+
+  stdout.writeln('');
   stdout.writeln('$_passed passed, $_failed failed');
   if (_failed > 0) exitCode = 1;
 }
@@ -1525,7 +1959,11 @@ Future<({SecureSocket socket, Uint8List key})> _rawPhone(int port) async {
     onError: (Object _) {},
     cancelOnError: true,
   );
-  socket.add(PacketCodec.encode(const PairPacket(PairStage.hello, _phone)));
+  socket.add(
+    PacketCodec.encode(
+      PairPacket(PairStage.resume, PairDetail.resume(_phone, _secret)),
+    ),
+  );
   return (
     socket: socket,
     key: await key.future.timeout(const Duration(seconds: 2)),

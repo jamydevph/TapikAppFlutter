@@ -119,10 +119,19 @@ class _ConnectViewState extends State<_ConnectView>
       bottom: false,
       child: BlocListener<ConnectCubit, ConnectState>(
         listenWhen: (previous, current) =>
-            current is ConnectReady && current.needsPairingCode,
+            current is ConnectReady &&
+            (current.needsPairingCode ||
+                previous is ConnectReady && previous.needsPairingCode),
         listener: (context, state) {
           if (state is! ConnectReady) return;
-          unawaited(_promptForCode(context.read<ConnectCubit>(), state));
+          if (state.needsPairingCode) {
+            unawaited(_promptForCode(context.read<ConnectCubit>(), state));
+            return;
+          }
+          final router = GoRouter.of(context);
+          if (_prompting && router.state.matchedLocation == AppRoutes.pairing) {
+            router.pop();
+          }
         },
         child: BlocBuilder<ConnectCubit, ConnectState>(
           builder: (context, state) {

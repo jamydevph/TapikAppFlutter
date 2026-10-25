@@ -1,5 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'laptop_link_store.dart';
+
 class FingerprintStore {
   const FingerprintStore._();
 
@@ -24,5 +26,6 @@ class FingerprintStore {
     if (agentId.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyFor(agentId));
+    await LaptopLinkStore.forget(agentId);
   }
 }

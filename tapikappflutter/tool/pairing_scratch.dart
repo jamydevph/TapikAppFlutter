@@ -3,9 +3,13 @@ import 'dart:math';
 
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
+import 'package:tapikappflutter/core/protocol/pair_detail.dart';
 import 'package:tapikappflutter/features/agent/view_model/paired_phone_label.dart';
 import 'package:tapikappflutter/services/security/paired_phone.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
+import 'package:tapikappflutter/services/security/reconnect_secret.dart';
+
+const String _secret = 'scratch-secret';
 
 var _passed = 0;
 var _failed = 0;
@@ -22,28 +26,44 @@ DateTime _at = DateTime(2026, 1, 1, 12);
 PairingGuard _guard({
   Set<String> trusted = const {},
   List<PairedPhone> history = const [],
+  bool pairing = true,
+  int maxWrongCodes = PairingGuard.defaultMaxWrongCodesPerWindow,
 }) {
   _at = DateTime(2026, 1, 1, 12);
-  return PairingGuard(
-    trustedClients: trusted,
+  final guard = PairingGuard(
+    trustedClients: {
+      for (final id in trusted) id: ReconnectSecret.hash(_secret),
+    },
     history: history,
+    maxWrongCodesPerWindow: maxWrongCodes,
     random: Random(7),
     clock: () => _at,
   );
+  if (pairing) guard.openPairing();
+  return guard;
 }
 
-void _pair(PairingGuard guard, String phone) {
+PairPacket _introduce(String phone) =>
+    PairPacket(PairStage.introduce, PairDetail.introduce(phone));
+
+PairPacket _resume(String phone, [String secret = _secret]) =>
+    PairPacket(PairStage.resume, PairDetail.resume(phone, secret));
+
+String? _pair(PairingGuard guard, String phone) {
+  guard.openPairing();
   guard.open();
-  guard.onPacket(PairPacket(PairStage.hello, phone));
-  guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
+  guard.onPacket(_introduce(phone));
+  return guard
+      .onPacket(PairPacket(PairStage.code, guard.visibleCode!))
+      .issuedSecret;
 }
 
 void main() {
   stdout.writeln('an unknown phone must prove physical presence');
   var guard = _guard();
   guard.open();
-  var decision = guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
-  _check('a hello does not grant access', decision.isAccepted, false);
+  var decision = guard.onPacket(_introduce('phone-a'));
+  _check('an introduction does not grant access', decision.isAccepted, false);
   _check(
     'the agent asks for a code',
     decision.reply?.stage,
@@ -63,6 +83,18 @@ void main() {
   _check('a wrong code is refused', wrongAccepted, false);
   _check('the right code is accepted', decision.isAccepted, true);
   _check('and the code stops being shown', guard.visibleCode, null);
+  final issued = decision.issuedSecret;
+  _check(
+    'the laptop issues a reconnect secret with the acceptance',
+    issued != null && ReconnectSecret.isToken(issued) && issued.length == 43,
+    true,
+  );
+  _check(
+    'and keeps only its hash',
+    guard.trustedClients['phone-a'],
+    ReconnectSecret.hash(issued!),
+  );
+  _check('pairing closes once a phone pairs', guard.isPairingOpen, false);
 
   stdout.writeln('');
   stdout.writeln('input is ignored until the handshake completes');
@@ -71,34 +103,78 @@ void main() {
   final before = guard.onPacket(const MovePacket(dx: 10, dy: 10));
   _check('motion before pairing is not accepted', before.isAccepted, false);
   _check('and is not a rejection either', before.shouldDrop, false);
-  guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  guard.onPacket(_introduce('phone-a'));
   guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
   final after = guard.onPacket(const MovePacket(dx: 10, dy: 10));
   _check('motion after pairing is accepted', after.isAccepted, true);
 
   stdout.writeln('');
-  stdout.writeln('a remembered phone skips the code');
-  guard = _guard(trusted: {'phone-a'});
+  stdout.writeln('a remembered phone skips the code only with its secret');
+  guard = _guard(trusted: {'phone-a'}, pairing: false);
   guard.open();
-  decision = guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
-  _check('a trusted phone is accepted at hello', decision.isAccepted, true);
+  decision = guard.onPacket(_resume('phone-a'));
+  _check(
+    'a trusted phone with its secret is accepted',
+    decision.isAccepted,
+    true,
+  );
   _check('no code is shown', guard.visibleCode, null);
   _check('the reply says accepted', decision.reply?.stage, PairStage.accepted);
+  _check('and no new secret is issued', decision.issuedSecret, null);
 
   guard = _guard(trusted: {'phone-a'});
   guard.open();
-  decision = guard.onPacket(const PairPacket(PairStage.hello, 'phone-b'));
+  decision = guard.onPacket(_resume('phone-a', 'stolen-guess'));
+  _check(
+    'the right phone id with the wrong secret is asked for the code',
+    [decision.isAccepted, decision.reply?.stage],
+    [false, PairStage.codeRequired],
+  );
+
+  guard = _guard(trusted: {'phone-a'});
+  guard.open();
+  decision = guard.onPacket(_resume('phone-b'));
   _check(
     'a different phone still needs the code',
     decision.reply?.stage,
     PairStage.codeRequired,
   );
 
+  guard = _guard(trusted: {'phone-a'});
+  guard.open();
+  decision = guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  _check(
+    'a v3 hello with a trusted id is refused outright',
+    [decision.isAccepted, decision.shouldDrop, decision.reply?.detail],
+    [false, true, PairingGuard.outdatedPhone],
+  );
+  guard.open();
+  decision = guard.onPacket(const PairPacket(PairStage.introduce, '3 phone-a'));
+  _check(
+    'an introduction from an older protocol is refused',
+    [decision.shouldDrop, decision.reply?.detail],
+    [true, PairingGuard.outdatedPhone],
+  );
+  guard.open();
+  decision = guard.onPacket(const PairPacket(PairStage.introduce, '4 phone a'));
+  _check(
+    'a malformed introduction is refused',
+    [decision.shouldDrop, guard.visibleCode],
+    [true, null],
+  );
+  guard.open();
+  decision = guard.onPacket(const PairPacket(PairStage.resume, '4 phone-a'));
+  _check(
+    'a resume without a secret is refused',
+    [decision.isAccepted, decision.shouldDrop],
+    [false, true],
+  );
+
   stdout.writeln('');
   stdout.writeln('repeated wrong codes back off');
-  guard = _guard();
+  guard = _guard(maxWrongCodes: 100);
   guard.open();
-  guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  guard.onPacket(_introduce('phone-a'));
   final real = guard.visibleCode!;
   for (var i = 0; i < PairingGuard.defaultMaxAttempts; i++) {
     guard.onPacket(const PairPacket(PairStage.code, '111111'));
@@ -115,9 +191,9 @@ void main() {
 
   stdout.writeln('');
   stdout.writeln('one phone cannot lock out another');
-  guard = _guard();
+  guard = _guard(maxWrongCodes: 100);
   guard.open('192.168.1.50');
-  guard.onPacket(const PairPacket(PairStage.hello, 'impostor'));
+  guard.onPacket(_introduce('impostor'));
   for (var i = 0; i < PairingGuard.defaultMaxAttempts; i++) {
     guard.onPacket(const PairPacket(PairStage.code, '111111'));
   }
@@ -125,7 +201,7 @@ void main() {
   guard.close();
   guard.open('192.168.1.77');
   _check('a different phone is not', guard.blockedFor, null);
-  decision = guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  decision = guard.onPacket(_introduce('phone-a'));
   _check(
     'and is still offered a code',
     decision.reply?.stage,
@@ -134,18 +210,23 @@ void main() {
   decision = guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
   _check('it pairs normally', decision.isAccepted, true);
   _check('and is remembered', decision.rememberClient, 'phone-a');
-  _check('by the guard itself', guard.trustedClients.contains('phone-a'), true);
+  _check(
+    'by the guard itself',
+    guard.trustedClients.containsKey('phone-a'),
+    true,
+  );
+  final secretA = decision.issuedSecret!;
 
   guard.close();
   guard.open('192.168.1.77');
-  decision = guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  decision = guard.onPacket(_resume('phone-a', secretA));
   _check('so it skips the code next time', decision.isAccepted, true);
 
   stdout.writeln('');
   stdout.writeln('a penalty does not outlive the window');
-  guard = _guard();
+  guard = _guard(maxWrongCodes: 100);
   guard.open('192.168.1.50');
-  guard.onPacket(const PairPacket(PairStage.hello, 'impostor'));
+  guard.onPacket(_introduce('impostor'));
   for (var i = 0; i < PairingGuard.defaultMaxAttempts; i++) {
     guard.onPacket(const PairPacket(PairStage.code, '111111'));
   }
@@ -158,7 +239,7 @@ void main() {
   stdout.writeln('codes and handshakes expire');
   guard = _guard();
   guard.open();
-  guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  guard.onPacket(_introduce('phone-a'));
   final expiring = guard.visibleCode!;
   _at = _at.add(PairingGuard.defaultCodeLifetime + const Duration(seconds: 1));
   decision = guard.onPacket(PairPacket(PairStage.code, expiring));
@@ -173,17 +254,32 @@ void main() {
   );
   _check('a silent phone times out', guard.hasTimedOut(), true);
 
+  guard = _guard();
+  guard.open();
+  _at = _at.add(const Duration(seconds: 20));
+  guard.onPacket(_introduce('phone-a'));
+  _at = _at.add(
+    PairingGuard.defaultHandshakeTimeout + const Duration(seconds: 1),
+  );
+  _check(
+    'a phone typing its code gets the whole code lifetime, not 30 seconds',
+    guard.hasTimedOut(),
+    false,
+  );
+  _at = _at.add(PairingGuard.defaultCodeLifetime);
+  _check('but not longer', guard.hasTimedOut(), true);
+
   guard = _guard(trusted: {'phone-a'});
   guard.open();
-  guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  guard.onPacket(_resume('phone-a'));
   _at = _at.add(const Duration(hours: 1));
   _check('an accepted session never times out', guard.hasTimedOut(), false);
 
   stdout.writeln('');
-  stdout.writeln('a phone with no pin pairs from scratch');
+  stdout.writeln('pairing again replaces the old secret');
   guard = _guard(trusted: {'phone-a'});
   guard.open();
-  decision = guard.onPacket(const PairPacket(PairStage.introduce, 'phone-a'));
+  decision = guard.onPacket(_introduce('phone-a'));
   _check(
     'an introduction is never accepted at once',
     decision.isAccepted,
@@ -195,31 +291,151 @@ void main() {
     PairStage.codeRequired,
   );
   _check(
-    'its old trust is dropped',
-    guard.trustedClients.contains('phone-a'),
-    false,
+    'an introduction alone forgets nothing, so it cannot un-pair a phone',
+    guard.trustedClients['phone-a'],
+    ReconnectSecret.hash(_secret),
   );
-  _check('and reported so it can be saved', decision.forgotClient, 'phone-a');
   decision = guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
   _check('the right code pairs it again', decision.isAccepted, true);
   _check(
-    'and it is trusted again',
-    guard.trustedClients.contains('phone-a'),
+    'and the new secret replaces the old one',
+    guard.trustedClients['phone-a'],
+    ReconnectSecret.hash(decision.issuedSecret!),
+  );
+  guard.close();
+  guard.open();
+  decision = guard.onPacket(_resume('phone-a'));
+  _check('so the old secret no longer gets in', decision.isAccepted, false);
+
+  stdout.writeln('');
+  stdout.writeln('the laptop accepts new phones only while pairing is open');
+  guard = _guard(trusted: {'phone-a'}, pairing: false);
+  guard.open();
+  decision = guard.onPacket(_introduce('phone-b'));
+  _check(
+    'a new phone is turned away while pairing is closed',
+    [decision.shouldDrop, decision.reply?.detail, guard.visibleCode],
+    [true, PairingGuard.pairingClosed, null],
+  );
+  guard.open();
+  decision = guard.onPacket(_resume('phone-a', 'wrong-secret'));
+  _check(
+    'so is a known id with the wrong secret',
+    [decision.shouldDrop, decision.reply?.detail],
+    [true, PairingGuard.pairingClosed],
+  );
+  guard.open();
+  decision = guard.onPacket(_resume('phone-a'));
+  _check(
+    'a paired phone reconnects without anyone opening pairing',
+    decision.isAccepted,
     true,
+  );
+  guard.close();
+  guard.openPairing();
+  _check(
+    'opening pairing lasts two minutes',
+    guard.pairingOpenUntil,
+    _at.add(PairingGuard.defaultPairingWindow),
+  );
+  guard.open();
+  decision = guard.onPacket(_introduce('phone-b'));
+  _check(
+    'a new phone then gets a code',
+    decision.reply?.stage,
+    PairStage.codeRequired,
+  );
+  _check('and the laptop is waiting for it', guard.awaitsCode, true);
+  final late = guard.visibleCode!;
+  _at = _at.add(PairingGuard.defaultPairingWindow);
+  _check(
+    'after two minutes pairing is closed and the code is hidden',
+    [guard.isPairingOpen, guard.pairingOpenUntil, guard.visibleCode],
+    [false, null, null],
+  );
+  decision = guard.onPacket(PairPacket(PairStage.code, late));
+  _check(
+    'so the code no longer works',
+    [decision.isAccepted, decision.reply?.detail],
+    [false, PairingGuard.pairingClosed],
   );
 
   guard = _guard();
   guard.open();
-  decision = guard.onPacket(const PairPacket(PairStage.introduce, 'phone-b'));
+  guard.onPacket(_introduce('phone-b'));
+  guard.closePairing();
   _check(
-    'an unknown phone introducing itself has nothing to forget',
-    decision.forgotClient,
-    null,
+    'stopping pairing hides the code at once',
+    [guard.visibleCode, guard.awaitsCode, guard.pairingStopped],
+    [null, false, false],
+  );
+
+  guard = _guard();
+  final wrongs = <String?>[];
+  for (var i = 0; i < PairingGuard.defaultMaxWrongCodesPerWindow; i++) {
+    guard.close();
+    guard.open('10.0.0.$i');
+    guard.onPacket(_introduce('guesser-$i'));
+    wrongs.add(
+      guard.onPacket(const PairPacket(PairStage.code, '999999')).reply?.detail,
+    );
+  }
+  _check(
+    'five wrong codes in one window stop pairing, even from five addresses',
+    [guard.isPairingOpen, guard.pairingStopped, wrongs.last],
+    [false, true, PairingGuard.pairingStoppedReason],
+  );
+  guard.close();
+  guard.open('10.0.0.99');
+  decision = guard.onPacket(_introduce('guesser-99'));
+  _check(
+    'and nobody new gets a code until the laptop opens pairing again',
+    [decision.shouldDrop, guard.visibleCode],
+    [true, null],
   );
   _check(
-    'and is asked for the code as usual',
-    decision.reply?.stage,
-    PairStage.codeRequired,
+    'and it tells them why, not just that pairing is closed',
+    decision.reply?.detail,
+    PairingGuard.pairingStoppedReason,
+  );
+  guard.openPairing();
+  _check('opening it again clears the stop', guard.pairingStopped, false);
+
+  guard = _guard(trusted: {'phone-a'});
+  guard.open();
+  guard.onPacket(_resume('phone-a'));
+  _check(
+    'a paired phone reconnecting closes the window, since only one phone '
+    'can be connected',
+    guard.isPairingOpen,
+    false,
+  );
+  _check(
+    'ids and secrets longer than 64 characters are not tokens',
+    [ReconnectSecret.isToken('a' * 64), ReconnectSecret.isToken('a' * 65)],
+    [true, false],
+  );
+
+  stdout.writeln('');
+  stdout.writeln('reconnect secrets');
+  final made = {for (var i = 0; i < 20; i++) ReconnectSecret.generate()};
+  _check('every secret is new', made.length, 20);
+  _check(
+    'a secret matches only its own hash',
+    [
+      ReconnectSecret.matches(_secret, ReconnectSecret.hash(_secret)),
+      ReconnectSecret.matches('other', ReconnectSecret.hash(_secret)),
+      ReconnectSecret.matches(_secret, 'short'),
+    ],
+    [true, false, false],
+  );
+  _check(
+    'a new phone id is a 22-character token',
+    [
+      ReconnectSecret.newClientId().length,
+      ReconnectSecret.isToken(ReconnectSecret.newClientId()),
+    ],
+    [22, true],
   );
 
   stdout.writeln('');
@@ -231,21 +447,25 @@ void main() {
     guard.forgetCurrentClient(),
     null,
   );
-  guard.onPacket(const PairPacket(PairStage.hello, 'phone-b'));
+  guard.onPacket(_introduce('phone-b'));
   decision = guard.onPacket(const PairPacket(PairStage.forget));
   _check(
     'a forget request during the handshake does nothing',
     decision.outcome,
     PairingOutcome.pending,
   );
-  _check('and forgets nobody', guard.trustedClients.contains('phone-a'), true);
+  _check(
+    'and forgets nobody',
+    guard.trustedClients.containsKey('phone-a'),
+    true,
+  );
   _check(
     'an unaccepted phone cannot forget anyone',
     guard.forgetCurrentClient(),
     null,
   );
   guard.open();
-  guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  guard.onPacket(_resume('phone-a'));
   _check(
     'an accepted phone can be forgotten',
     guard.forgetCurrentClient(),
@@ -253,7 +473,7 @@ void main() {
   );
   _check(
     'and is no longer trusted',
-    guard.trustedClients.contains('phone-a'),
+    guard.trustedClients.containsKey('phone-a'),
     false,
   );
   _check(
@@ -268,7 +488,7 @@ void main() {
   );
   guard = _guard();
   final pairedAt = _at;
-  _pair(guard, 'phone-a');
+  final secretOfA = _pair(guard, 'phone-a')!;
   _check(
     'a new pairing records the time it paired and was seen',
     guard.pairedPhones.single ==
@@ -289,7 +509,7 @@ void main() {
   );
   _at = _at.add(const Duration(hours: 1));
   guard.open();
-  guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
+  guard.onPacket(_resume('phone-a', secretOfA));
   _check(
     'reconnecting with no code counts as seen as well',
     guard.pairedPhones.single.lastSeenAt == _at,
@@ -329,9 +549,9 @@ void main() {
   _check(
     'one phone can be forgotten by its id, keeping the others',
     [
-      removed ==
+      removed?.phone ==
           PairedPhone(id: 'dated-phone', pairedAt: DateTime(2025, 12, 1)),
-      guard.trustedClients.join(','),
+      guard.trustedClients.keys.join(','),
     ],
     [true, 'old-phone'],
   );
@@ -343,22 +563,35 @@ void main() {
   guard.restore(removed!);
   _check(
     'a phone whose forget could not be saved can be put back, dates and all',
-    guard.pairedPhones.first == removed,
-    true,
+    [
+      guard.pairedPhones.first == removed.phone,
+      guard.trustedClients['dated-phone'] == ReconnectSecret.hash(_secret),
+    ],
+    [true, true],
   );
-  guard.restore(PairedPhone(id: 'dated-phone', pairedAt: DateTime(2020)));
+  guard.restore(
+    TrustedPhone(
+      PairedPhone(id: 'dated-phone', pairedAt: DateTime(2020)),
+      ReconnectSecret.hash('other'),
+    ),
+  );
   _check(
     'putting back a phone that is already trusted keeps its current dates',
-    guard.pairedPhones.first == removed,
-    true,
+    [
+      guard.pairedPhones.first == removed.phone,
+      guard.trustedClients['dated-phone'] == ReconnectSecret.hash(_secret),
+    ],
+    [true, true],
   );
   guard.open();
-  guard.onPacket(const PairPacket(PairStage.introduce, 'dated-phone'));
+  guard.onPacket(_introduce('dated-phone'));
+  guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
   _check(
-    'a phone pairing again from scratch loses its old dates',
-    guard.pairedPhones.any((phone) => phone.id == 'dated-phone'),
-    false,
+    'a phone pairing again with a code gets new dates',
+    guard.pairedPhones.firstWhere((p) => p.id == 'dated-phone').pairedAt,
+    _at,
   );
+  guard.close();
   guard.forgetAllClients();
   _check('forgetting all phones clears every date', guard.pairedPhones, []);
 

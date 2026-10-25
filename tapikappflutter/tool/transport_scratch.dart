@@ -26,7 +26,7 @@ NetworkTransport _phone() {
 }
 
 void _answerPairing(Socket socket, PairPacket packet) {
-  if (packet.stage == PairStage.hello || packet.stage == PairStage.introduce) {
+  if (packet.stage == PairStage.introduce || packet.stage == PairStage.resume) {
     socket.add(PacketCodec.encode(const PairPacket(PairStage.codeRequired)));
   } else if (packet.stage == PairStage.code && packet.detail == _toolCode) {
     final key = DatagramSeal.newKey();
