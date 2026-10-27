@@ -5,6 +5,7 @@ import '../../core/protocol/packet.dart';
 import '../../core/resources/constants.dart';
 import 'paired_phone.dart';
 import 'reconnect_secret.dart';
+import 'spake2.dart';
 
 enum PairingOutcome { pending, retry, accepted, rejected, expired }
 
@@ -85,6 +86,10 @@ class PairingGuard {
   static const String pairingStoppedReason =
       'Too many wrong codes, so pairing stopped on the laptop. '
       'Click “Pair a phone” there to try again.';
+  static const String introducedTwice =
+      'That phone introduced itself twice. Pick the laptop again.';
+  static const String wrongCode =
+      'That code does not match the one on the laptop.';
 
   final Duration handshakeTimeout;
   final Duration codeLifetime;
@@ -99,7 +104,9 @@ class PairingGuard {
   final Map<String, _PeerPenalty> _penalties = <String, _PeerPenalty>{};
 
   String _peer = '';
+  String _fingerprint = '';
   String? _clientId;
+  Spake2Session? _session;
   String? _code;
   DateTime? _codeExpiry;
   DateTime? _openedAt;
@@ -174,9 +181,11 @@ class PairingGuard {
     }
   }
 
-  void open([String peer = '']) {
+  void open([String peer = '', String fingerprint = '']) {
     _peer = peer;
+    _fingerprint = fingerprint;
     _clientId = null;
+    _session = null;
     _openedAt = _now();
     _code = null;
     _codeExpiry = null;
@@ -189,6 +198,13 @@ class PairingGuard {
     if (_accepted && client != null && _trusted.containsKey(client)) {
       _seen(client);
     }
+    if (!_accepted &&
+        _session != null &&
+        isPairingOpen &&
+        _wrongInWindow >= maxWrongCodesPerWindow) {
+      _stopPairing();
+    }
+    _session = null;
     _clientId = null;
     _openedAt = null;
     _code = null;
@@ -213,13 +229,18 @@ class PairingGuard {
     }
     switch (packet.stage) {
       case PairStage.hello:
+      case PairStage.code:
         return _reject(outdatedPhone);
       case PairStage.introduce:
+        if (_clientId != null) return _reject(introducedTwice);
         return _onIntroduce(packet.detail);
       case PairStage.resume:
+        if (_clientId != null) return _reject(introducedTwice);
         return _onResume(packet.detail);
-      case PairStage.code:
-        return _onCode(packet.detail);
+      case PairStage.spakeShare:
+        return _onShare(packet.detail);
+      case PairStage.spakeConfirm:
+        return _onConfirm(packet.detail);
       case PairStage.accepted:
       case PairStage.rejected:
       case PairStage.codeRequired:
@@ -267,12 +288,14 @@ class PairingGuard {
     if (!isPairingOpen) {
       return _reject(_stopped ? pairingStoppedReason : pairingClosed);
     }
+    if (_wrongInWindow >= maxWrongCodesPerWindow) return _stopPairing();
     final blocked = blockedFor;
     if (blocked != null) {
       return _reject(
         'Too many wrong codes. Try again in ${blocked.inSeconds + 1} seconds.',
       );
     }
+    _session = null;
     final now = _now();
     _code = _newCode();
     _openedAt = now;
@@ -316,15 +339,14 @@ class PairingGuard {
     _history[clientId] = known.seenAt(_now());
   }
 
-  PairingDecision _onCode(String entered) {
-    final expected = _code;
+  PairingDecision? _shareRefusal() {
     final expiry = _codeExpiry;
     if (!isPairingOpen) {
       _code = null;
       _codeExpiry = null;
       return _reject(_stopped ? pairingStoppedReason : pairingClosed);
     }
-    if (expected == null || expiry == null) {
+    if (_code == null || expiry == null || _clientId == null) {
       return _reject('Start pairing from the phone first.');
     }
     if (_now().isAfter(expiry)) {
@@ -338,32 +360,80 @@ class PairingGuard {
         ),
       );
     }
+    if (_wrongInWindow >= maxWrongCodesPerWindow) return _stopPairing();
     final blocked = blockedFor;
     if (blocked != null) {
       return _reject(
         'Too many wrong codes. Try again in ${blocked.inSeconds + 1} seconds.',
       );
     }
-    if (entered != expected) {
-      final penalty = _penaltyForPeer();
-      penalty.attempts += 1;
-      if (penalty.attempts >= maxAttempts) {
-        penalty.blockedUntil = _now().add(_backoff(penalty.attempts));
-      }
-      _wrongInWindow += 1;
-      if (_wrongInWindow >= maxWrongCodesPerWindow) {
-        closePairing();
-        _stopped = true;
-        return _reject(pairingStoppedReason);
-      }
-      return PairingDecision(
-        outcome: PairingOutcome.retry,
-        reply: const PairPacket(
-          PairStage.rejected,
-          'That code does not match the one on the laptop.',
-        ),
-      );
+    if (_session != null) {
+      return _reject('That phone tried a second code without finishing.');
     }
+    return null;
+  }
+
+  PairingDecision _onShare(String detail) {
+    final refusal = _shareRefusal();
+    if (refusal != null) return refusal;
+    _countAttempt();
+    final share = Spake2.decode(detail, Spake2.shareLength);
+    final laptop = Spake2.laptop(
+      code: _code!,
+      phoneId: _clientId!,
+      laptopFingerprint: _fingerprint,
+      random: _random,
+    );
+    final session = share == null ? null : laptop.finish(share);
+    if (session == null) return _wrongCode();
+    _session = session;
+    return PairingDecision(
+      outcome: PairingOutcome.pending,
+      reply: PairPacket(
+        PairStage.spakeShare,
+        PairDetail.spakeReply(
+          Spake2.encode(laptop.share),
+          Spake2.encode(session.confirmB),
+        ),
+      ),
+    );
+  }
+
+  void _countAttempt() {
+    final penalty = _penaltyForPeer();
+    penalty.attempts += 1;
+    if (penalty.attempts >= maxAttempts) {
+      penalty.blockedUntil = _now().add(_backoff(penalty.attempts));
+    }
+    _wrongInWindow += 1;
+  }
+
+  PairingDecision _wrongCode() {
+    if (_wrongInWindow >= maxWrongCodesPerWindow) return _stopPairing();
+    return _reject(wrongCode);
+  }
+
+  PairingDecision _stopPairing() {
+    closePairing();
+    _stopped = true;
+    return _reject(pairingStoppedReason);
+  }
+
+  PairingDecision _onConfirm(String detail) {
+    final session = _session;
+    _session = null;
+    if (session == null) {
+      return _reject('Start pairing from the phone first.');
+    }
+    if (!isPairingOpen) {
+      return _reject(_stopped ? pairingStoppedReason : pairingClosed);
+    }
+    if (detail.isEmpty) {
+      if (_wrongInWindow >= maxWrongCodesPerWindow) return _stopPairing();
+      return const PairingDecision(outcome: PairingOutcome.retry);
+    }
+    final tag = Spake2.decode(detail, Spake2.confirmLength);
+    if (tag == null || !session.acceptsA(tag)) return _wrongCode();
     _accepted = true;
     _penalties.remove(_peer);
     _code = null;

@@ -106,12 +106,10 @@ class _PairingViewState extends State<_PairingView> {
                             ),
                           ),
                           const SizedBox(height: AppSpacing.xl),
-                          _LaptopIdCard(
-                            laptopId: widget.request.laptopId,
-                            onMismatch: () =>
-                                _close(const PairingLaptopMismatch()),
-                          ),
-                          const SizedBox(height: AppSpacing.xl),
+                          if (widget.request.laptopId case final laptopId?) ...[
+                            _LaptopIdLine(laptopId: laptopId),
+                            const SizedBox(height: AppSpacing.xl),
+                          ],
                           _CodeInput(
                             controller: _controller,
                             focusNode: _focusNode,
@@ -169,97 +167,34 @@ class _PairingViewState extends State<_PairingView> {
   }
 }
 
-class _LaptopIdCard extends StatelessWidget {
-  const _LaptopIdCard({required this.laptopId, required this.onMismatch});
+class _LaptopIdLine extends StatelessWidget {
+  const _LaptopIdLine({required this.laptopId});
 
-  static const String label = 'LAPTOP ID';
-  static const String hint =
-      'Check that your laptop shows the same ID before you type the code.';
-  static const String mismatch = 'The IDs don’t match';
-  static const double iconSize = 14;
-  static const double linkHeight = kMinInteractiveDimension;
+  static const String label = 'Laptop ID';
 
-  final String? laptopId;
-  final VoidCallback onMismatch;
+  final String laptopId;
 
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
-    final id = laptopId;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colors.primarySubtle,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          AppSpacing.md,
-          AppSpacing.md,
-          AppSpacing.md,
-          id == null ? AppSpacing.md : AppSpacing.x3s,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.verified_user_outlined,
-                  size: iconSize,
-                  color: colors.accent,
-                ),
-                const SizedBox(width: AppSpacing.x2s + AppSpacing.x3s),
-                Flexible(
-                  child: Text(
-                    label,
-                    style: AppTextStyles.overline.copyWith(
-                      color: colors.accent,
-                    ),
-                  ),
-                ),
-              ],
+    final style = AppTextStyles.caption.copyWith(color: colors.textTertiary);
+    return Row(
+      children: [
+        Text(label, style: style),
+        const SizedBox(width: AppSpacing.xs),
+        Flexible(
+          child: Text(
+            laptopId,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.monoS.copyWith(
+              color: colors.textTertiary,
+              fontSize: style.fontSize,
+              height: style.height,
             ),
-            const SizedBox(height: AppSpacing.xs),
-            if (id == null)
-              Text(
-                'Tapikapp could not read this laptop’s ID. Pair only if you '
-                'are sure it is yours.',
-                style: AppTextStyles.bodyS.copyWith(color: colors.textDanger),
-              )
-            else ...[
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  id,
-                  maxLines: 1,
-                  style: AppTextStyles.monoM.copyWith(
-                    color: colors.textPrimary,
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                hint,
-                style: AppTextStyles.bodyS.copyWith(
-                  color: colors.textSecondary,
-                ),
-              ),
-              TextButton(
-                onPressed: onMismatch,
-                style: TextButton.styleFrom(
-                  foregroundColor: colors.textDanger,
-                  textStyle: AppTextStyles.labelM,
-                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                  minimumSize: const Size(0, linkHeight),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text(mismatch),
-              ),
-            ],
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 }
@@ -466,8 +401,8 @@ class _LockNote extends StatelessWidget {
         const SizedBox(width: AppSpacing.xs + AppSpacing.x3s),
         Expanded(
           child: Text(
-            'Matching IDs prove this is your laptop. Typing the code proves '
-            'you are at it, and the code is never sent to the cloud.',
+            'The code is never sent. Tapikapp uses it to prove this is the '
+            'laptop showing it, and that you are at it.',
             style: AppTextStyles.bodyS.copyWith(color: colors.textTertiary),
           ),
         ),

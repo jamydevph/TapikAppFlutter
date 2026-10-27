@@ -7,9 +7,11 @@ import 'package:tapikappflutter/core/error/failure.dart';
 import 'package:tapikappflutter/core/protocol/codec.dart';
 import 'package:tapikappflutter/core/protocol/packet.dart';
 import 'package:tapikappflutter/core/protocol/packet_buffer.dart';
+import 'package:tapikappflutter/core/protocol/pair_detail.dart';
 import 'package:tapikappflutter/services/input/pointer_pump.dart';
 import 'package:tapikappflutter/services/security/agent_certificate.dart';
 import 'package:tapikappflutter/services/security/datagram_seal.dart';
+import 'package:tapikappflutter/services/security/spake2.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
 
@@ -25,10 +27,39 @@ NetworkTransport _phone() {
   return transport;
 }
 
+final Expando<String> _clientOf = Expando<String>();
+final Expando<Spake2Session> _sessionOf = Expando<Spake2Session>();
+
 void _answerPairing(Socket socket, PairPacket packet) {
   if (packet.stage == PairStage.introduce || packet.stage == PairStage.resume) {
+    final parts = PairDetail.parts(packet.detail);
+    _clientOf[socket] = parts.length > 1 ? parts[1] : '';
     socket.add(PacketCodec.encode(const PairPacket(PairStage.codeRequired)));
-  } else if (packet.stage == PairStage.code && packet.detail == _toolCode) {
+  } else if (packet.stage == PairStage.spakeShare) {
+    final laptop = Spake2.laptop(
+      code: _toolCode,
+      phoneId: _clientOf[socket] ?? '',
+      laptopFingerprint: _certificate.fingerprint,
+    );
+    final share = Spake2.decode(packet.detail, Spake2.shareLength);
+    final session = share == null ? null : laptop.finish(share);
+    if (session == null) return;
+    _sessionOf[socket] = session;
+    socket.add(
+      PacketCodec.encode(
+        PairPacket(
+          PairStage.spakeShare,
+          PairDetail.spakeReply(
+            Spake2.encode(laptop.share),
+            Spake2.encode(session.confirmB),
+          ),
+        ),
+      ),
+    );
+  } else if (packet.stage == PairStage.spakeConfirm) {
+    final session = _sessionOf[socket];
+    final tag = Spake2.decode(packet.detail, Spake2.confirmLength);
+    if (session == null || tag == null || !session.acceptsA(tag)) return;
     final key = DatagramSeal.newKey();
     _toolSeal = DatagramSeal(key);
     socket.add(

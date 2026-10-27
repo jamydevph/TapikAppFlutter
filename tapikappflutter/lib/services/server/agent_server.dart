@@ -348,7 +348,7 @@ class AgentServer {
     _clientLabel = _labelFor(socket.remoteAddress);
     _buffer.clear();
     _packetCount = 0;
-    guard.open(_clientLabel!);
+    guard.open(_clientLabel!, certificate.fingerprint);
     _lastHeard = DateTime.now();
     _handshake?.cancel();
     _handshake = Timer.periodic(handshakeTick, (_) => _watchdog());
@@ -501,6 +501,10 @@ class AgentServer {
     _handshake = null;
     final wasAccepted = guard.isAccepted;
     guard.close();
+    if (!guard.isPairingOpen) {
+      _pairingTimer?.cancel();
+      _pairingTimer = null;
+    }
     if (wasAccepted) _persistHistory();
     final reader = _reader;
     final client = _client;

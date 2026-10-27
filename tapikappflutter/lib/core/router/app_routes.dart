@@ -6,7 +6,6 @@ class AppRoutes {
   static const String signup = '/signup';
   static const String forgotPassword = '/forgot-password';
   static const String pairing = '/pairing';
-  static const String laptopMismatch = '/laptop-mismatch';
   static const String connect = '/connect';
   static const String trackpad = '/trackpad';
   static const String keyboard = '/keyboard';

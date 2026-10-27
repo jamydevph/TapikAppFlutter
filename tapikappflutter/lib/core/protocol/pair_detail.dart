@@ -14,5 +14,8 @@ class PairDetail {
   static String accepted(String sealKey, {String? secret}) =>
       secret == null ? sealKey : [sealKey, secret].join(separator);
 
+  static String spakeReply(String share, String confirm) =>
+      [share, confirm].join(separator);
+
   static List<String> parts(String detail) => detail.split(separator);
 }

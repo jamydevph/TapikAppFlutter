@@ -8,8 +8,10 @@ import 'package:tapikappflutter/features/agent/view_model/paired_phone_label.dar
 import 'package:tapikappflutter/services/security/paired_phone.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
 import 'package:tapikappflutter/services/security/reconnect_secret.dart';
+import 'package:tapikappflutter/services/security/spake2.dart';
 
 const String _secret = 'scratch-secret';
+const String _laptop = 'AB:CD:EF:01';
 
 var _passed = 0;
 var _failed = 0;
@@ -51,17 +53,43 @@ PairPacket _resume(String phone, [String secret = _secret]) =>
 
 String? _pair(PairingGuard guard, String phone) {
   guard.openPairing();
-  guard.open();
+  guard.open('', _laptop);
   guard.onPacket(_introduce(phone));
-  return guard
-      .onPacket(PairPacket(PairStage.code, guard.visibleCode!))
-      .issuedSecret;
+  return _enter(guard, guard.visibleCode!, phone).issuedSecret;
+}
+
+PairingDecision _enter(
+  PairingGuard guard,
+  String code,
+  String phone, {
+  String laptop = _laptop,
+}) {
+  final spake = Spake2.phone(
+    code: code,
+    phoneId: phone,
+    laptopFingerprint: laptop,
+  );
+  final answer = guard.onPacket(
+    PairPacket(PairStage.spakeShare, Spake2.encode(spake.share)),
+  );
+  final reply = answer.reply;
+  if (reply == null || reply.stage != PairStage.spakeShare) return answer;
+  final parts = PairDetail.parts(reply.detail);
+  final session = spake.finish(Spake2.decode(parts.first, Spake2.shareLength)!);
+  final tag = Spake2.decode(parts.last, Spake2.confirmLength)!;
+  final confirmed = session != null && session.acceptsB(tag);
+  return guard.onPacket(
+    PairPacket(
+      PairStage.spakeConfirm,
+      confirmed ? Spake2.encode(session.confirmA) : '',
+    ),
+  );
 }
 
 void main() {
   stdout.writeln('an unknown phone must prove physical presence');
   var guard = _guard();
-  guard.open();
+  guard.open('', _laptop);
   var decision = guard.onPacket(_introduce('phone-a'));
   _check('an introduction does not grant access', decision.isAccepted, false);
   _check(
@@ -77,9 +105,9 @@ void main() {
   );
 
   final code = guard.visibleCode!;
-  decision = guard.onPacket(const PairPacket(PairStage.code, '000000'));
+  decision = _enter(guard, '000000', 'phone-a');
   final wrongAccepted = decision.isAccepted;
-  decision = guard.onPacket(PairPacket(PairStage.code, code));
+  decision = _enter(guard, code, 'phone-a');
   _check('a wrong code is refused', wrongAccepted, false);
   _check('the right code is accepted', decision.isAccepted, true);
   _check('and the code stops being shown', guard.visibleCode, null);
@@ -99,19 +127,19 @@ void main() {
   stdout.writeln('');
   stdout.writeln('input is ignored until the handshake completes');
   guard = _guard();
-  guard.open();
+  guard.open('', _laptop);
   final before = guard.onPacket(const MovePacket(dx: 10, dy: 10));
   _check('motion before pairing is not accepted', before.isAccepted, false);
   _check('and is not a rejection either', before.shouldDrop, false);
   guard.onPacket(_introduce('phone-a'));
-  guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
+  _enter(guard, guard.visibleCode!, 'phone-a');
   final after = guard.onPacket(const MovePacket(dx: 10, dy: 10));
   _check('motion after pairing is accepted', after.isAccepted, true);
 
   stdout.writeln('');
   stdout.writeln('a remembered phone skips the code only with its secret');
   guard = _guard(trusted: {'phone-a'}, pairing: false);
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(_resume('phone-a'));
   _check(
     'a trusted phone with its secret is accepted',
@@ -123,7 +151,7 @@ void main() {
   _check('and no new secret is issued', decision.issuedSecret, null);
 
   guard = _guard(trusted: {'phone-a'});
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(_resume('phone-a', 'stolen-guess'));
   _check(
     'the right phone id with the wrong secret is asked for the code',
@@ -132,7 +160,7 @@ void main() {
   );
 
   guard = _guard(trusted: {'phone-a'});
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(_resume('phone-b'));
   _check(
     'a different phone still needs the code',
@@ -141,28 +169,28 @@ void main() {
   );
 
   guard = _guard(trusted: {'phone-a'});
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(const PairPacket(PairStage.hello, 'phone-a'));
   _check(
     'a v3 hello with a trusted id is refused outright',
     [decision.isAccepted, decision.shouldDrop, decision.reply?.detail],
     [false, true, PairingGuard.outdatedPhone],
   );
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(const PairPacket(PairStage.introduce, '3 phone-a'));
   _check(
     'an introduction from an older protocol is refused',
     [decision.shouldDrop, decision.reply?.detail],
     [true, PairingGuard.outdatedPhone],
   );
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(const PairPacket(PairStage.introduce, '4 phone a'));
   _check(
     'a malformed introduction is refused',
     [decision.shouldDrop, guard.visibleCode],
     [true, null],
   );
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(const PairPacket(PairStage.resume, '4 phone-a'));
   _check(
     'a resume without a secret is refused',
@@ -173,14 +201,14 @@ void main() {
   stdout.writeln('');
   stdout.writeln('repeated wrong codes back off');
   guard = _guard(maxWrongCodes: 100);
-  guard.open();
+  guard.open('', _laptop);
   guard.onPacket(_introduce('phone-a'));
   final real = guard.visibleCode!;
   for (var i = 0; i < PairingGuard.defaultMaxAttempts; i++) {
-    guard.onPacket(const PairPacket(PairStage.code, '111111'));
+    _enter(guard, '111111', 'phone-a');
   }
   _check('the guard is now blocked', guard.blockedFor != null, true);
-  final blocked = guard.onPacket(PairPacket(PairStage.code, real));
+  final blocked = _enter(guard, real, 'phone-a');
   _check(
     'even the correct code is refused while blocked',
     blocked.isAccepted,
@@ -192,14 +220,14 @@ void main() {
   stdout.writeln('');
   stdout.writeln('one phone cannot lock out another');
   guard = _guard(maxWrongCodes: 100);
-  guard.open('192.168.1.50');
+  guard.open('192.168.1.50', _laptop);
   guard.onPacket(_introduce('impostor'));
   for (var i = 0; i < PairingGuard.defaultMaxAttempts; i++) {
-    guard.onPacket(const PairPacket(PairStage.code, '111111'));
+    _enter(guard, '111111', 'impostor');
   }
   _check('the guessing phone is blocked', guard.blockedFor != null, true);
   guard.close();
-  guard.open('192.168.1.77');
+  guard.open('192.168.1.77', _laptop);
   _check('a different phone is not', guard.blockedFor, null);
   decision = guard.onPacket(_introduce('phone-a'));
   _check(
@@ -207,7 +235,7 @@ void main() {
     decision.reply?.stage,
     PairStage.codeRequired,
   );
-  decision = guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
+  decision = _enter(guard, guard.visibleCode!, 'phone-a');
   _check('it pairs normally', decision.isAccepted, true);
   _check('and is remembered', decision.rememberClient, 'phone-a');
   _check(
@@ -218,36 +246,36 @@ void main() {
   final secretA = decision.issuedSecret!;
 
   guard.close();
-  guard.open('192.168.1.77');
+  guard.open('192.168.1.77', _laptop);
   decision = guard.onPacket(_resume('phone-a', secretA));
   _check('so it skips the code next time', decision.isAccepted, true);
 
   stdout.writeln('');
   stdout.writeln('a penalty does not outlive the window');
   guard = _guard(maxWrongCodes: 100);
-  guard.open('192.168.1.50');
+  guard.open('192.168.1.50', _laptop);
   guard.onPacket(_introduce('impostor'));
   for (var i = 0; i < PairingGuard.defaultMaxAttempts; i++) {
-    guard.onPacket(const PairPacket(PairStage.code, '111111'));
+    _enter(guard, '111111', 'impostor');
   }
   _at = _at.add(PairingGuard.penaltyWindow + const Duration(minutes: 1));
   guard.close();
-  guard.open('192.168.1.50');
+  guard.open('192.168.1.50', _laptop);
   _check('the same phone starts clean later', guard.blockedFor, null);
 
   stdout.writeln('');
   stdout.writeln('codes and handshakes expire');
   guard = _guard();
-  guard.open();
+  guard.open('', _laptop);
   guard.onPacket(_introduce('phone-a'));
   final expiring = guard.visibleCode!;
   _at = _at.add(PairingGuard.defaultCodeLifetime + const Duration(seconds: 1));
-  decision = guard.onPacket(PairPacket(PairStage.code, expiring));
+  decision = _enter(guard, expiring, 'phone-a');
   _check('an expired code is refused', decision.isAccepted, false);
   _check('and the socket is dropped', decision.shouldDrop, true);
 
   guard = _guard();
-  guard.open();
+  guard.open('', _laptop);
   _check('a fresh handshake has not timed out', guard.hasTimedOut(), false);
   _at = _at.add(
     PairingGuard.defaultHandshakeTimeout + const Duration(seconds: 1),
@@ -255,7 +283,7 @@ void main() {
   _check('a silent phone times out', guard.hasTimedOut(), true);
 
   guard = _guard();
-  guard.open();
+  guard.open('', _laptop);
   _at = _at.add(const Duration(seconds: 20));
   guard.onPacket(_introduce('phone-a'));
   _at = _at.add(
@@ -270,7 +298,7 @@ void main() {
   _check('but not longer', guard.hasTimedOut(), true);
 
   guard = _guard(trusted: {'phone-a'});
-  guard.open();
+  guard.open('', _laptop);
   guard.onPacket(_resume('phone-a'));
   _at = _at.add(const Duration(hours: 1));
   _check('an accepted session never times out', guard.hasTimedOut(), false);
@@ -278,7 +306,7 @@ void main() {
   stdout.writeln('');
   stdout.writeln('pairing again replaces the old secret');
   guard = _guard(trusted: {'phone-a'});
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(_introduce('phone-a'));
   _check(
     'an introduction is never accepted at once',
@@ -295,7 +323,7 @@ void main() {
     guard.trustedClients['phone-a'],
     ReconnectSecret.hash(_secret),
   );
-  decision = guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
+  decision = _enter(guard, guard.visibleCode!, 'phone-a');
   _check('the right code pairs it again', decision.isAccepted, true);
   _check(
     'and the new secret replaces the old one',
@@ -303,28 +331,28 @@ void main() {
     ReconnectSecret.hash(decision.issuedSecret!),
   );
   guard.close();
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(_resume('phone-a'));
   _check('so the old secret no longer gets in', decision.isAccepted, false);
 
   stdout.writeln('');
   stdout.writeln('the laptop accepts new phones only while pairing is open');
   guard = _guard(trusted: {'phone-a'}, pairing: false);
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(_introduce('phone-b'));
   _check(
     'a new phone is turned away while pairing is closed',
     [decision.shouldDrop, decision.reply?.detail, guard.visibleCode],
     [true, PairingGuard.pairingClosed, null],
   );
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(_resume('phone-a', 'wrong-secret'));
   _check(
     'so is a known id with the wrong secret',
     [decision.shouldDrop, decision.reply?.detail],
     [true, PairingGuard.pairingClosed],
   );
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(_resume('phone-a'));
   _check(
     'a paired phone reconnects without anyone opening pairing',
@@ -338,7 +366,7 @@ void main() {
     guard.pairingOpenUntil,
     _at.add(PairingGuard.defaultPairingWindow),
   );
-  guard.open();
+  guard.open('', _laptop);
   decision = guard.onPacket(_introduce('phone-b'));
   _check(
     'a new phone then gets a code',
@@ -353,7 +381,7 @@ void main() {
     [guard.isPairingOpen, guard.pairingOpenUntil, guard.visibleCode],
     [false, null, null],
   );
-  decision = guard.onPacket(PairPacket(PairStage.code, late));
+  decision = _enter(guard, late, 'phone-b');
   _check(
     'so the code no longer works',
     [decision.isAccepted, decision.reply?.detail],
@@ -361,7 +389,7 @@ void main() {
   );
 
   guard = _guard();
-  guard.open();
+  guard.open('', _laptop);
   guard.onPacket(_introduce('phone-b'));
   guard.closePairing();
   _check(
@@ -374,11 +402,9 @@ void main() {
   final wrongs = <String?>[];
   for (var i = 0; i < PairingGuard.defaultMaxWrongCodesPerWindow; i++) {
     guard.close();
-    guard.open('10.0.0.$i');
+    guard.open('10.0.0.$i', _laptop);
     guard.onPacket(_introduce('guesser-$i'));
-    wrongs.add(
-      guard.onPacket(const PairPacket(PairStage.code, '999999')).reply?.detail,
-    );
+    wrongs.add(_enter(guard, '999999', 'guesser-$i').reply?.detail);
   }
   _check(
     'five wrong codes in one window stop pairing, even from five addresses',
@@ -386,7 +412,7 @@ void main() {
     [false, true, PairingGuard.pairingStoppedReason],
   );
   guard.close();
-  guard.open('10.0.0.99');
+  guard.open('10.0.0.99', _laptop);
   decision = guard.onPacket(_introduce('guesser-99'));
   _check(
     'and nobody new gets a code until the laptop opens pairing again',
@@ -402,7 +428,7 @@ void main() {
   _check('opening it again clears the stop', guard.pairingStopped, false);
 
   guard = _guard(trusted: {'phone-a'});
-  guard.open();
+  guard.open('', _laptop);
   guard.onPacket(_resume('phone-a'));
   _check(
     'a paired phone reconnecting closes the window, since only one phone '
@@ -441,7 +467,7 @@ void main() {
   stdout.writeln('');
   stdout.writeln('a paired phone can ask to be forgotten');
   guard = _guard(trusted: {'phone-a'});
-  guard.open();
+  guard.open('', _laptop);
   _check(
     'nothing is forgotten before a session exists',
     guard.forgetCurrentClient(),
@@ -464,7 +490,7 @@ void main() {
     guard.forgetCurrentClient(),
     null,
   );
-  guard.open();
+  guard.open('', _laptop);
   guard.onPacket(_resume('phone-a'));
   _check(
     'an accepted phone can be forgotten',
@@ -508,7 +534,7 @@ void main() {
     [true, true, null],
   );
   _at = _at.add(const Duration(hours: 1));
-  guard.open();
+  guard.open('', _laptop);
   guard.onPacket(_resume('phone-a', secretOfA));
   _check(
     'reconnecting with no code counts as seen as well',
@@ -583,9 +609,9 @@ void main() {
     ],
     [true, true],
   );
-  guard.open();
+  guard.open('', _laptop);
   guard.onPacket(_introduce('dated-phone'));
-  guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
+  _enter(guard, guard.visibleCode!, 'dated-phone');
   _check(
     'a phone pairing again with a code gets new dates',
     guard.pairedPhones.firstWhere((p) => p.id == 'dated-phone').pairedAt,
@@ -708,6 +734,186 @@ void main() {
       now: now,
     ),
     'Not connected since this update',
+  );
+
+  stdout.writeln('');
+  stdout.writeln('the code is checked with SPAKE2, never sent');
+  guard = _guard();
+  guard.open('', _laptop);
+  guard.onPacket(_introduce('phone-a'));
+  decision = guard.onPacket(PairPacket(PairStage.code, guard.visibleCode!));
+  _check(
+    'a typed code sent in the clear is refused as an older phone',
+    [decision.isAccepted, decision.shouldDrop, decision.reply?.detail],
+    [false, true, PairingGuard.outdatedPhone],
+  );
+
+  guard = _guard();
+  guard.open('', _laptop);
+  final early = Spake2.phone(
+    code: '123456',
+    phoneId: 'phone-a',
+    laptopFingerprint: _laptop,
+  );
+  decision = guard.onPacket(
+    PairPacket(PairStage.spakeShare, Spake2.encode(early.share)),
+  );
+  _check(
+    'a share before any introduction is refused',
+    [decision.isAccepted, decision.shouldDrop],
+    [false, true],
+  );
+
+  guard = _guard();
+  guard.open('', _laptop);
+  guard.onPacket(_introduce('phone-a'));
+  final shown = guard.visibleCode!;
+  decision = _enter(guard, shown, 'phone-a', laptop: 'FA:KE:00:01');
+  _check(
+    'a phone that sees another certificate cannot pair, even with the right '
+    'code, and is asked again',
+    [decision.isAccepted, decision.outcome, decision.reply],
+    [false, PairingOutcome.retry, null],
+  );
+  _check(
+    'that attempt still counts against the window',
+    [guard.isPairingOpen, guard.trustedClients.containsKey('phone-a')],
+    [true, false],
+  );
+  decision = _enter(guard, shown, 'phone-a');
+  _check(
+    'the same code then works from the real laptop’s point of view',
+    decision.isAccepted,
+    true,
+  );
+
+  guard = _guard();
+  guard.open('', _laptop);
+  guard.onPacket(_introduce('phone-a'));
+  decision = guard.onPacket(const PairPacket(PairStage.spakeShare, 'AAAA'));
+  _check(
+    'a malformed share is refused and dropped',
+    [decision.isAccepted, decision.shouldDrop],
+    [false, true],
+  );
+
+  guard = _guard();
+  guard.open('', _laptop);
+  guard.onPacket(_introduce('phone-a'));
+  final first = Spake2.phone(
+    code: guard.visibleCode!,
+    phoneId: 'phone-a',
+    laptopFingerprint: _laptop,
+  );
+  final firstReply = guard.onPacket(
+    PairPacket(PairStage.spakeShare, Spake2.encode(first.share)),
+  );
+  decision = guard.onPacket(
+    PairPacket(PairStage.spakeShare, Spake2.encode(first.share)),
+  );
+  _check(
+    'a second share before confirming is refused',
+    [firstReply.reply?.stage, decision.shouldDrop],
+    [PairStage.spakeShare, true],
+  );
+
+  guard = _guard();
+  guard.open('', _laptop);
+  guard.onPacket(_introduce('phone-a'));
+  final forger = Spake2.phone(
+    code: '000000',
+    phoneId: 'phone-a',
+    laptopFingerprint: _laptop,
+  );
+  guard.onPacket(PairPacket(PairStage.spakeShare, Spake2.encode(forger.share)));
+  decision = guard.onPacket(
+    PairPacket(PairStage.spakeConfirm, Spake2.encode(List.filled(32, 7))),
+  );
+  _check(
+    'a forged confirmation is refused, dropped and trusts nothing',
+    [
+      decision.isAccepted,
+      decision.shouldDrop,
+      guard.trustedClients.containsKey('phone-a'),
+    ],
+    [false, true, false],
+  );
+
+  guard = _guard();
+  guard.open('', _laptop);
+  guard.onPacket(_introduce('phone-a'));
+  decision = guard.onPacket(const PairPacket(PairStage.spakeConfirm, 'x'));
+  _check(
+    'a confirmation with no share before it is refused',
+    [decision.isAccepted, decision.shouldDrop],
+    [false, true],
+  );
+
+  guard = _guard();
+  guard.open('', _laptop);
+  guard.onPacket(_introduce('phone-a'));
+  final shares = <String>{};
+  for (var i = 0; i < 3; i++) {
+    final phone = Spake2.phone(
+      code: '000000',
+      phoneId: 'phone-a',
+      laptopFingerprint: _laptop,
+    );
+    final answer = guard.onPacket(
+      PairPacket(PairStage.spakeShare, Spake2.encode(phone.share)),
+    );
+    shares.add(PairDetail.parts(answer.reply!.detail).first);
+    guard.onPacket(const PairPacket(PairStage.spakeConfirm));
+  }
+  _check('the laptop uses a fresh share every time', shares.length, 3);
+
+  guard = _guard();
+  for (var i = 0; i < PairingGuard.defaultMaxWrongCodesPerWindow; i++) {
+    guard.close();
+    guard.open('10.0.1.$i', _laptop);
+    guard.onPacket(_introduce('silent-$i'));
+    final silent = Spake2.phone(
+      code: '000000',
+      phoneId: 'silent-$i',
+      laptopFingerprint: _laptop,
+    );
+    guard.onPacket(
+      PairPacket(PairStage.spakeShare, Spake2.encode(silent.share)),
+    );
+  }
+  _check(
+    'hanging up after the laptop’s answer still counts as a wrong code',
+    [guard.isPairingOpen, guard.pairingStopped],
+    [true, false],
+  );
+  guard.close();
+  _check(
+    'so the fifth silent hang-up stops pairing',
+    [guard.isPairingOpen, guard.pairingStopped],
+    [false, true],
+  );
+
+  guard = _guard();
+  for (var i = 0; i < PairingGuard.defaultMaxWrongCodesPerWindow; i++) {
+    guard.close();
+    guard.open('10.0.2.$i', _laptop);
+    guard.onPacket(_introduce('garbler-$i'));
+    decision = guard.onPacket(const PairPacket(PairStage.spakeShare, 'AAAA'));
+  }
+  _check(
+    'a malformed fifth share also stops pairing, so no dead code is shown',
+    [guard.isPairingOpen, guard.pairingStopped, decision.reply?.detail],
+    [false, true, PairingGuard.pairingStoppedReason],
+  );
+
+  guard = _guard();
+  guard.open('', _laptop);
+  guard.onPacket(_introduce('phone-a'));
+  decision = guard.onPacket(_introduce('phone-b'));
+  _check(
+    'a second introduction on one connection is refused',
+    [decision.shouldDrop, decision.reply?.detail],
+    [true, PairingGuard.introducedTwice],
   );
 
   stdout.writeln('');

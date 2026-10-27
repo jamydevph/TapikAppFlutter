@@ -14,7 +14,3 @@ class PairingCodeEntered extends PairingResult {
 
   final String code;
 }
-
-class PairingLaptopMismatch extends PairingResult {
-  const PairingLaptopMismatch();
-}

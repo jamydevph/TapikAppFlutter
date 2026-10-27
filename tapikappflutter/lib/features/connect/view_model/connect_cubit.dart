@@ -61,12 +61,10 @@ class ConnectCubit extends Cubit<ConnectState> {
   DiscoveredAgent? _pairingAgent;
   bool _needsCode = false;
   bool _codeRequested = false;
-  String? _codeAgentId;
   String? _codeFingerprint;
   String? _codeTrustingId;
   int _dials = 0;
   final Set<String> _revokedIds = <String>{};
-  final Set<String> _rejectedFingerprints = <String>{};
   String? _reconnectId;
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
@@ -437,36 +435,6 @@ class ConnectCubit extends Cubit<ConnectState> {
     await disconnect();
   }
 
-  Future<void> rejectLaptop(String? laptopId) async {
-    final agentId = _codeAgentId;
-    final fingerprint = _codeFingerprint;
-    _codeAgentId = null;
-    _codeFingerprint = null;
-    _needsCode = false;
-    await disconnect();
-    if (agentId == null ||
-        fingerprint == null ||
-        laptopId == null ||
-        LaptopId.of(fingerprint) != laptopId) {
-      return;
-    }
-    _rejectedFingerprints.add(fingerprint);
-    if (await FingerprintStore.load(agentId) == fingerprint) {
-      await FingerprintStore.forget(agentId);
-    }
-    if (_registeredFingerprint(agentId) == fingerprint) {
-      unawaited(_revokeQuietly(agentId));
-    }
-  }
-
-  Future<void> _revokeQuietly(String agentId) async {
-    try {
-      await _devices.revokeDevice(agentId);
-    } on Failure {
-      return;
-    }
-  }
-
   void dismissConnectionError() {
     if (_connectionError == null) return;
     _connectionError = null;
@@ -519,7 +487,6 @@ class ConnectCubit extends Cubit<ConnectState> {
       if (device.certFingerprint.isEmpty) continue;
       final local = await FingerprintStore.load(device.id);
       if (local != null || !_stillTrusts(device)) continue;
-      if (_rejectedFingerprints.contains(device.certFingerprint)) continue;
       await FingerprintStore.remember(device.id, device.certFingerprint);
     }
   }
@@ -646,7 +613,6 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   void _askForCode() {
     _needsCode = true;
-    _codeAgentId = _pairingAgent?.id;
     _codeFingerprint = _transport.peerFingerprint;
   }
 
