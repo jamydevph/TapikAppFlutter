@@ -471,40 +471,28 @@ class _LaptopIdCard extends StatelessWidget {
   const _LaptopIdCard({required this.laptopId});
 
   static const String hint =
-      'Your phone shows this ID while pairing. Pair only if the two match.';
+      'Phones check this ID by themselves when they pair.';
 
   final String laptopId;
 
   @override
   Widget build(BuildContext context) {
     final colors = AppColors.of(context);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colors.primarySubtle,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: Text(
-                laptopId,
-                maxLines: 1,
-                style: AppTextStyles.monoM.copyWith(color: colors.textPrimary),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.x2s),
-            Text(
-              hint,
-              style: AppTextStyles.bodyS.copyWith(color: colors.textSecondary),
-            ),
-          ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          laptopId,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: AppTextStyles.monoS.copyWith(color: colors.textSecondary),
         ),
-      ),
+        const SizedBox(height: AppSpacing.x2s),
+        Text(
+          hint,
+          style: AppTextStyles.caption.copyWith(color: colors.textTertiary),
+        ),
+      ],
     );
   }
 }

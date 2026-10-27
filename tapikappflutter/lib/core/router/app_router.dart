@@ -7,7 +7,6 @@ import '../../features/auth/view/login_page.dart';
 import '../../features/auth/view/signup_page.dart';
 import '../../features/auth/view/splash_page.dart';
 import '../../features/connect/view/connect_page.dart';
-import '../../features/connect/view/laptop_mismatch_page.dart';
 import '../../features/connect/view/pairing_code_page.dart';
 import '../../features/connect/view/pairing_route.dart';
 import '../../features/keyboard/view/keyboard_page.dart';
@@ -55,12 +54,6 @@ class AppRouter {
             GoRoute(
               path: AppRoutes.pairing,
               builder: (context, state) => PairingCodePage(
-                request: state.extra as PairingRequest?,
-              ),
-            ),
-            GoRoute(
-              path: AppRoutes.laptopMismatch,
-              builder: (context, state) => LaptopMismatchPage(
                 request: state.extra as PairingRequest?,
               ),
             ),

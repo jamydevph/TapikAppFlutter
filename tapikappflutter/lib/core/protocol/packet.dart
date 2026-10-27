@@ -173,7 +173,9 @@ enum PairStage {
   introduce(6),
   forget(7),
   resume(8),
-  busy(9);
+  busy(9),
+  spakeShare(10),
+  spakeConfirm(11);
 
   const PairStage(this.value);
 

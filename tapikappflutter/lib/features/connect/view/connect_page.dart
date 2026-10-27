@@ -89,9 +89,6 @@ class _ConnectViewState extends State<_ConnectView>
       case PairingCodeEntered(:final code)
           when code.length == PairingCubit.codeLength:
         cubit.submitPairingCode(code);
-      case PairingLaptopMismatch():
-        unawaited(router.push<void>(AppRoutes.laptopMismatch, extra: request));
-        await cubit.rejectLaptop(request.laptopId);
       case _:
         await cubit.cancelPairing();
     }

@@ -15,6 +15,7 @@ import 'package:tapikappflutter/services/security/laptop_name.dart';
 import 'package:tapikappflutter/services/security/paired_phone.dart';
 import 'package:tapikappflutter/services/security/pairing_guard.dart';
 import 'package:tapikappflutter/services/security/reconnect_secret.dart';
+import 'package:tapikappflutter/services/security/spake2.dart';
 import 'package:tapikappflutter/services/server/agent_server.dart';
 import 'package:tapikappflutter/services/transport/network_transport.dart';
 import 'package:tapikappflutter/services/transport/transport.dart';
@@ -69,7 +70,7 @@ Future<SecureServerSocket> _lenientImpostor(
               socket.add(
                 PacketCodec.encode(
                   PairPacket(
-                    packet.stage == PairStage.code
+                    packet.stage == PairStage.spakeShare
                         ? PairStage.accepted
                         : PairStage.codeRequired,
                   ),
@@ -90,6 +91,48 @@ Future<SecureServerSocket> _lenientImpostor(
       },
       onError: (Object _) => socket.destroy(),
       onDone: socket.destroy,
+    );
+  }, onError: (Object _) {});
+  return server;
+}
+
+Future<SecureServerSocket> _relayImpostor(
+  AgentCertificate certificate,
+  int realPort,
+  List<PairPacket> overheard,
+) async {
+  final server = await SecureServerSocket.bind(
+    InternetAddress.loopbackIPv4,
+    0,
+    SecurityContext(withTrustedRoots: false)
+      ..useCertificateChainBytes(utf8.encode(certificate.certificatePem))
+      ..usePrivateKeyBytes(utf8.encode(certificate.privateKeyPem)),
+  );
+  server.listen((phone) async {
+    unawaited(phone.done.catchError((Object _) => phone));
+    final laptop = await SecureSocket.connect(
+      InternetAddress.loopbackIPv4,
+      realPort,
+      onBadCertificate: (_) => true,
+    );
+    unawaited(laptop.done.catchError((Object _) => laptop));
+    final fromPhone = PacketBuffer();
+    final fromLaptop = PacketBuffer();
+    phone.listen(
+      (chunk) {
+        overheard.addAll(fromPhone.add(chunk).whereType<PairPacket>());
+        laptop.add(chunk);
+      },
+      onError: (Object _) => laptop.destroy(),
+      onDone: laptop.destroy,
+    );
+    laptop.listen(
+      (chunk) {
+        overheard.addAll(fromLaptop.add(chunk).whereType<PairPacket>());
+        phone.add(chunk);
+      },
+      onError: (Object _) => phone.destroy(),
+      onDone: phone.destroy,
     );
   }, onError: (Object _) {});
   return server;
@@ -486,6 +529,15 @@ Future<void> main() async {
     'it is the ID of the certificate the fake presented',
     LaptopId.of(fooled.peerFingerprint),
     LaptopId.of(other.fingerprint),
+  );
+  final fooledErrors = <String>[];
+  fooled.pairingErrors.listen((failure) => fooledErrors.add(failure.message));
+  fooled.submitPairingCode('123456');
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  _check(
+    'a fake that skips the code check and just says accepted is refused',
+    [fooled.state, fooled.issuedSecret, fooledErrors.isNotEmpty],
+    [TransportState.disconnected, null, true],
   );
   await fooled.dispose();
   await collector.close();
@@ -1882,11 +1934,7 @@ ${mine.certificatePem.trim()}
     'a wrong code is answered with the reason and a fresh request for the '
     'code, so the phone asks again',
     [asked, typistErrors.lastOrNull?.message, typist.state],
-    [
-      2,
-      'That code does not match the one on the laptop.',
-      TransportState.pairing,
-    ],
+    [2, NetworkTransport.laptopNotConfirmed, TransportState.pairing],
   );
   typist.submitPairingCode('999999');
   await Future<void>.delayed(const Duration(milliseconds: 200));
@@ -1931,6 +1979,113 @@ ${mine.certificatePem.trim()}
   );
   await slow.dispose();
   await retrying.dispose();
+
+  stdout.writeln('');
+  stdout.writeln('a fake laptop relaying to the real one learns nothing');
+  final relayPorts = await _freePorts();
+  final relayed = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(trustedClients: _trust({})),
+    tcpPort: relayPorts.$1,
+    udpPort: relayPorts.$2,
+  );
+  await relayed.start();
+  relayed.openPairing();
+  final relayHeard = <PairPacket>[];
+  final relay = await _relayImpostor(other, relayPorts.$1, relayHeard);
+  final victim = NetworkTransport();
+  final victimErrors = <String>[];
+  var victimAsked = 0;
+  victim.pairingErrors.listen((failure) => victimErrors.add(failure.message));
+  victim.codeRequests.listen((_) => victimAsked += 1);
+  await victim.connect(
+    TransportEndpoint(
+      clientId: 'relayed-phone',
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: relay.port,
+      udpPort: relayPorts.$2,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 400));
+  final realCode = relayed.guard.visibleCode;
+  _check(
+    'the relay gets the real laptop to show a code',
+    [realCode != null, victim.state],
+    [true, TransportState.pairing],
+  );
+  victim.submitPairingCode(realCode ?? '');
+  await Future<void>.delayed(const Duration(milliseconds: 600));
+  _check(
+    'typing the real code through the relay does not pair, and the phone '
+    'says why and asks again',
+    [
+      victim.state,
+      victimErrors.lastOrNull,
+      victimAsked,
+      relayed.guard.trustedClients.isEmpty,
+    ],
+    [TransportState.pairing, NetworkTransport.laptopNotConfirmed, 2, true],
+  );
+  _check(
+    'the code itself never crosses the wire, and nothing is accepted',
+    [
+      relayHeard.any((packet) => packet.detail.contains(realCode ?? '-')),
+      relayHeard.any((packet) => packet.stage == PairStage.accepted),
+      relayHeard.any((packet) => packet.stage == PairStage.code),
+    ],
+    [false, false, false],
+  );
+  await victim.dispose();
+  await relay.close();
+  await relayed.dispose();
+
+  final quitPorts = await _freePorts();
+  final quitting = AgentServer(
+    certificate: mine,
+    guard: PairingGuard(
+      trustedClients: _trust({}),
+      pairingWindow: const Duration(milliseconds: 1200),
+      maxWrongCodesPerWindow: 1,
+    ),
+    tcpPort: quitPorts.$1,
+    udpPort: quitPorts.$2,
+  );
+  await quitting.start();
+  quitting.openPairing();
+  final quitter = await SecureSocket.connect(
+    InternetAddress.loopbackIPv4,
+    quitPorts.$1,
+    onBadCertificate: (_) => true,
+  );
+  unawaited(quitter.done.catchError((Object _) => quitter));
+  quitter.listen((_) {}, onError: (Object _) {});
+  quitter.add(
+    PacketCodec.encode(
+      PairPacket(PairStage.introduce, PairDetail.introduce('quitter')),
+    ),
+  );
+  final guess = Spake2.phone(
+    code: '000000',
+    phoneId: 'quitter',
+    laptopFingerprint: mine.fingerprint,
+  );
+  quitter.add(
+    PacketCodec.encode(
+      PairPacket(PairStage.spakeShare, Spake2.encode(guess.share)),
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  quitter.destroy();
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  final stoppedEarly = quitting.state.pairingStopped;
+  await Future<void>.delayed(const Duration(milliseconds: 1200));
+  _check(
+    'a phone that hangs up on its last allowed guess stops pairing, and the '
+    'stop outlives the window',
+    [stoppedEarly, quitting.state.pairingStopped, quitting.state.isPairingOpen],
+    [true, true, false],
+  );
+  await quitting.dispose();
 
   stdout.writeln('');
   stdout.writeln('$_passed passed, $_failed failed');

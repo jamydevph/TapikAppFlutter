@@ -10,6 +10,7 @@ import '../../core/protocol/pair_detail.dart';
 import '../security/agent_certificate.dart';
 import '../security/datagram_seal.dart';
 import '../security/reconnect_secret.dart';
+import '../security/spake2.dart';
 import 'transport.dart';
 
 class NetworkTransport implements Transport {
@@ -23,6 +24,8 @@ class NetworkTransport implements Transport {
   static const Duration defaultKeepaliveInterval = Duration(seconds: 3);
   static const Duration defaultPeerTimeout = Duration(seconds: 8);
   static const Duration forgetFlushTimeout = Duration(seconds: 1);
+  static const String laptopNotConfirmed =
+      'That code didn’t work, or that isn’t the laptop showing it.';
   static const Set<PacketType> motionTypes = {
     PacketType.move,
     PacketType.scroll,
@@ -52,7 +55,8 @@ class NetworkTransport implements Transport {
   String? _peerFingerprint;
   String? _issuedSecret;
   DatagramSeal? _seal;
-  bool _submittedCode = false;
+  Spake2? _spake;
+  bool _laptopConfirmed = false;
   Timer? _keepalive;
   DateTime _lastHeard = DateTime.fromMillisecondsSinceEpoch(0);
   int _udpPort = 0;
@@ -167,9 +171,43 @@ class NetworkTransport implements Transport {
 
   @override
   void submitPairingCode(String code) {
+    final endpoint = _endpoint;
+    final fingerprint = _peerFingerprint;
     if (_state != TransportState.pairing) return;
-    _submittedCode = true;
-    _sendDirect(PairPacket(PairStage.code, code));
+    if (endpoint == null || fingerprint == null) return;
+    final spake = Spake2.phone(
+      code: code,
+      phoneId: endpoint.clientId,
+      laptopFingerprint: fingerprint,
+    );
+    _spake = spake;
+    _sendDirect(PairPacket(PairStage.spakeShare, Spake2.encode(spake.share)));
+  }
+
+  void _onLaptopShare(String detail) {
+    final spake = _spake;
+    _spake = null;
+    if (spake == null || _state != TransportState.pairing) return;
+    final parts = PairDetail.parts(detail);
+    final wellFormed = parts.length == 2;
+    final share = wellFormed
+        ? Spake2.decode(parts.first, Spake2.shareLength)
+        : null;
+    final tag = wellFormed
+        ? Spake2.decode(parts.last, Spake2.confirmLength)
+        : null;
+    final session = share == null ? null : spake.finish(share);
+    if (session == null || tag == null || !session.acceptsB(tag)) {
+      if (!_pairingErrors.isClosed) {
+        _pairingErrors.add(const HandshakeFailure(laptopNotConfirmed));
+      }
+      _sendDirect(const PairPacket(PairStage.spakeConfirm));
+      return;
+    }
+    _laptopConfirmed = true;
+    _sendDirect(
+      PairPacket(PairStage.spakeConfirm, Spake2.encode(session.confirmA)),
+    );
   }
 
   @override
@@ -196,7 +234,7 @@ class NetworkTransport implements Transport {
     switch (packet.stage) {
       case PairStage.accepted:
         if (_state != TransportState.pairing) return;
-        if (_endpoint?.fingerprint == null && !_submittedCode) {
+        if (_endpoint?.fingerprint == null && !_laptopConfirmed) {
           if (!_pairingErrors.isClosed) {
             _pairingErrors.add(
               const HandshakeFailure(
@@ -240,7 +278,10 @@ class NetworkTransport implements Transport {
         }
       case PairStage.codeRequired:
         if (!_codeRequests.isClosed) _codeRequests.add(null);
+      case PairStage.spakeShare:
+        _onLaptopShare(packet.detail);
       case PairStage.hello:
+      case PairStage.spakeConfirm:
       case PairStage.code:
       case PairStage.introduce:
       case PairStage.resume:
@@ -354,7 +395,8 @@ class NetworkTransport implements Transport {
     _peerFingerprint = null;
     _issuedSecret = null;
     _seal = null;
-    _submittedCode = false;
+    _spake = null;
+    _laptopConfirmed = false;
     _keepalive?.cancel();
     _keepalive = null;
     _buffer.clear();
