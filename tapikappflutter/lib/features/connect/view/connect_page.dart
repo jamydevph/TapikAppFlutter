@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/di/injection.dart';
 import '../../../core/format/relative_time.dart';
 import '../../../core/router/app_routes.dart';
 import '../../../core/theme/app_colors.dart';
@@ -23,12 +22,7 @@ class ConnectPage extends StatelessWidget {
   const ConnectPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (context) => AppProviders.connectCubit(context)..start(),
-      child: const _ConnectView(),
-    );
-  }
+  Widget build(BuildContext context) => const _ConnectView();
 }
 
 class _ConnectView extends StatefulWidget {

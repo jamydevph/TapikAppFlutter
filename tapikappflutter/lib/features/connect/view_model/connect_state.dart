@@ -65,6 +65,32 @@ class BluetoothSection extends Equatable {
   List<Object?> get props => [access, computers, error];
 }
 
+enum LinkNoticeKind { lost, reconnecting, restored, gaveUp }
+
+class LinkNotice extends Equatable {
+  const LinkNotice({
+    required this.kind,
+    required this.laptopId,
+    required this.laptop,
+    this.detail,
+  });
+
+  final LinkNoticeKind kind;
+  final String laptopId;
+  final String laptop;
+  final String? detail;
+
+  LinkNotice moveTo(LinkNoticeKind next, {String? detail}) => LinkNotice(
+    kind: next,
+    laptopId: laptopId,
+    laptop: laptop,
+    detail: detail,
+  );
+
+  @override
+  List<Object?> get props => [kind, laptopId, laptop, detail];
+}
+
 sealed class ConnectState extends Equatable {
   const ConnectState();
 
@@ -86,6 +112,7 @@ class ConnectReady extends ConnectState {
     this.connectionError,
     this.registryError,
     this.bluetooth,
+    this.linkNotice,
   });
 
   final List<ConnectDevice> nearby;
@@ -96,6 +123,7 @@ class ConnectReady extends ConnectState {
   final String? connectionError;
   final String? registryError;
   final BluetoothSection? bluetooth;
+  final LinkNotice? linkNotice;
 
   @override
   List<Object?> get props => [
@@ -107,6 +135,7 @@ class ConnectReady extends ConnectState {
     connectionError,
     registryError,
     bluetooth,
+    linkNotice,
   ];
 }
 

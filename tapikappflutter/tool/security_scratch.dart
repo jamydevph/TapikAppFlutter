@@ -1714,6 +1714,25 @@ ${mine.certificatePem.trim()}
     ],
   );
   await newcomer.dispose();
+  final ignored = NetworkTransport(
+    replyTimeout: const Duration(milliseconds: 400),
+  );
+  final ignoredStates = <TransportState>[];
+  ignored.states.listen(ignoredStates.add);
+  await ignored.connect(
+    TransportEndpoint(
+      clientId: 'ignored-phone',
+      host: InternetAddress.loopbackIPv4.address,
+      tcpPort: eavesdropper.port,
+    ),
+  );
+  await Future<void>.delayed(const Duration(milliseconds: 800));
+  _check(
+    'a laptop that never answers is dropped, so a reconnect loop moves on',
+    [ignoredStates.contains(TransportState.pairing), ignored.state],
+    [true, TransportState.disconnected],
+  );
+  await ignored.dispose();
   await eavesdropper.close();
 
   stdout.writeln('');

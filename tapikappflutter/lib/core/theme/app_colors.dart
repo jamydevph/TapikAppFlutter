@@ -31,6 +31,10 @@ class AppColors extends ThemeExtension<AppColors> {
     required this.borderStrong,
     required this.borderFocus,
     required this.borderDanger,
+    required this.toastSuccess,
+    required this.toastWarning,
+    required this.toastDanger,
+    required this.onToast,
   });
 
   static const AppColors light = AppColors(
@@ -61,6 +65,10 @@ class AppColors extends ThemeExtension<AppColors> {
     borderStrong: AppPalette.ink300,
     borderFocus: AppPalette.violet500,
     borderDanger: AppPalette.red600,
+    toastSuccess: AppPalette.lime800,
+    toastWarning: AppPalette.amber700,
+    toastDanger: AppPalette.red700,
+    onToast: AppPalette.white,
   );
 
   static const AppColors dark = AppColors(
@@ -91,6 +99,10 @@ class AppColors extends ThemeExtension<AppColors> {
     borderStrong: AppPalette.ink600,
     borderFocus: AppPalette.violet400,
     borderDanger: AppPalette.red400,
+    toastSuccess: AppPalette.lime800,
+    toastWarning: AppPalette.amber700,
+    toastDanger: AppPalette.red700,
+    onToast: AppPalette.white,
   );
 
   final Color canvas;
@@ -120,6 +132,10 @@ class AppColors extends ThemeExtension<AppColors> {
   final Color borderStrong;
   final Color borderFocus;
   final Color borderDanger;
+  final Color toastSuccess;
+  final Color toastWarning;
+  final Color toastDanger;
+  final Color onToast;
 
   static AppColors of(BuildContext context) {
     return Theme.of(context).extension<AppColors>() ?? light;
@@ -154,6 +170,10 @@ class AppColors extends ThemeExtension<AppColors> {
     Color? borderStrong,
     Color? borderFocus,
     Color? borderDanger,
+    Color? toastSuccess,
+    Color? toastWarning,
+    Color? toastDanger,
+    Color? onToast,
   }) {
     return AppColors(
       canvas: canvas ?? this.canvas,
@@ -183,6 +203,10 @@ class AppColors extends ThemeExtension<AppColors> {
       borderStrong: borderStrong ?? this.borderStrong,
       borderFocus: borderFocus ?? this.borderFocus,
       borderDanger: borderDanger ?? this.borderDanger,
+      toastSuccess: toastSuccess ?? this.toastSuccess,
+      toastWarning: toastWarning ?? this.toastWarning,
+      toastDanger: toastDanger ?? this.toastDanger,
+      onToast: onToast ?? this.onToast,
     );
   }
 
@@ -217,6 +241,10 @@ class AppColors extends ThemeExtension<AppColors> {
       borderStrong: Color.lerp(borderStrong, other.borderStrong, t)!,
       borderFocus: Color.lerp(borderFocus, other.borderFocus, t)!,
       borderDanger: Color.lerp(borderDanger, other.borderDanger, t)!,
+      toastSuccess: Color.lerp(toastSuccess, other.toastSuccess, t)!,
+      toastWarning: Color.lerp(toastWarning, other.toastWarning, t)!,
+      toastDanger: Color.lerp(toastDanger, other.toastDanger, t)!,
+      onToast: Color.lerp(onToast, other.onToast, t)!,
     );
   }
 }

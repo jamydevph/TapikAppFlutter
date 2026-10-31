@@ -18,12 +18,14 @@ class NetworkTransport implements Transport {
     this.connectTimeout = defaultConnectTimeout,
     this.keepaliveInterval = defaultKeepaliveInterval,
     this.peerTimeout = defaultPeerTimeout,
+    this.replyTimeout = defaultReplyTimeout,
   });
 
   static const Duration defaultConnectTimeout = Duration(seconds: 5);
   static const Duration defaultKeepaliveInterval = Duration(seconds: 3);
   static const Duration defaultPeerTimeout = Duration(seconds: 8);
   static const Duration forgetFlushTimeout = Duration(seconds: 1);
+  static const Duration defaultReplyTimeout = Duration(seconds: 10);
   static const String laptopNotConfirmed =
       'That code didn’t work, or that isn’t the laptop showing it.';
   static const Set<PacketType> motionTypes = {
@@ -34,6 +36,7 @@ class NetworkTransport implements Transport {
   final Duration connectTimeout;
   final Duration keepaliveInterval;
   final Duration peerTimeout;
+  final Duration replyTimeout;
 
   final StreamController<TransportState> _states =
       StreamController<TransportState>.broadcast();
@@ -58,6 +61,7 @@ class NetworkTransport implements Transport {
   Spake2? _spake;
   bool _laptopConfirmed = false;
   Timer? _keepalive;
+  Timer? _replyTimer;
   DateTime _lastHeard = DateTime.fromMillisecondsSinceEpoch(0);
   int _udpPort = 0;
   int _generation = 0;
@@ -146,6 +150,7 @@ class NetworkTransport implements Transport {
         onError: (Object _) => _dropConnection(generation),
       );
       _emit(TransportState.pairing);
+      _replyTimer = Timer(replyTimeout, () => _dropConnection(generation));
       final secret = endpoint.secret;
       _sendDirect(
         expected != null && secret != null
@@ -231,6 +236,8 @@ class NetworkTransport implements Transport {
   }
 
   void _onPair(PairPacket packet) {
+    _replyTimer?.cancel();
+    _replyTimer = null;
     switch (packet.stage) {
       case PairStage.accepted:
         if (_state != TransportState.pairing) return;
@@ -399,6 +406,8 @@ class NetworkTransport implements Transport {
     _laptopConfirmed = false;
     _keepalive?.cancel();
     _keepalive = null;
+    _replyTimer?.cancel();
+    _replyTimer = null;
     _buffer.clear();
     await reader?.cancel();
     await datagramReader?.cancel();
