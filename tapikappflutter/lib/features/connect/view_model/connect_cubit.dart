@@ -26,6 +26,8 @@ class ConnectCubit extends Cubit<ConnectState> {
   static const Duration maxReconnectDelay = Duration(seconds: 30);
   static const int maxReconnectAttempts = 8;
   static const Duration bluetoothConnectTimeout = Duration(seconds: 20);
+  static const Duration lostNoticeDuration = Duration(seconds: 2);
+  static const Duration restoredNoticeDuration = Duration(seconds: 3);
   static const String bluetoothPlatform = 'Bluetooth';
 
   final DeviceRepository _devices;
@@ -72,6 +74,11 @@ class ConnectCubit extends Cubit<ConnectState> {
   String? _connectingId;
   String? _connectionError;
   String? _registryError;
+  bool _wasConnected = false;
+  bool _suspended = false;
+  LinkNotice? _linkNotice;
+  Timer? _linkTimer;
+  String? _resumeId;
 
   Future<void> start() async {
     _transportStates ??= _transport.states.listen(_onTransportState);
@@ -127,6 +134,7 @@ class ConnectCubit extends Cubit<ConnectState> {
       _publish();
       return;
     }
+    _clearLinkNotice();
     _cancelReconnect();
     _userDisconnected = false;
     _connectingId = agent.id;
@@ -317,7 +325,10 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   Future<void> _dial(DiscoveredAgent agent, {required bool manual}) async {
     if (!agent.isCompatible) {
-      if (!manual) _cancelReconnect();
+      if (!manual) {
+        _showGaveUp(_versionMessage(agent));
+        _cancelReconnect();
+      }
       _connectionError = _versionMessage(agent);
       _publish();
       return;
@@ -327,13 +338,15 @@ class ConnectCubit extends Cubit<ConnectState> {
     _codeRequested = false;
     if (manual) _connectionError = null;
     _publish();
+    var dialing = false;
     try {
       final pinned = await FingerprintStore.load(agent.id);
       final link = await LaptopLinkStore.forDial(
         agent.id,
         pinned: pinned != null,
       );
-      if (_userDisconnected) return;
+      if (_userDisconnected || (!manual && _suspended)) return;
+      dialing = true;
       await _transport.connect(
         TransportEndpoint(
           clientId: link.clientId,
@@ -364,6 +377,9 @@ class ConnectCubit extends Cubit<ConnectState> {
       _connectedAgent = null;
     } finally {
       _connectingId = null;
+      if (!manual && !dialing && !_userDisconnected && !_suspended) {
+        _scheduleReconnect();
+      }
       _publish();
     }
   }
@@ -372,6 +388,8 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   Future<void> _hangUp({required bool forget}) async {
     _userDisconnected = true;
+    _clearLinkNotice();
+    _resumeId = null;
     _cancelReconnect();
     final dial = _dials;
     if (forget) {
@@ -396,6 +414,7 @@ class ConnectCubit extends Cubit<ConnectState> {
   void _scheduleReconnect() {
     if (isClosed || _reconnectId == null) return;
     if (_reconnectAttempt >= maxReconnectAttempts) {
+      _showGaveUp();
       _cancelReconnect();
       _connectionError =
           'That laptop stopped responding. Tap it again when it is back.';
@@ -412,7 +431,7 @@ class ConnectCubit extends Cubit<ConnectState> {
 
   Future<void> _attemptReconnect() async {
     final id = _reconnectId;
-    if (id == null || isClosed || _connectingId != null) return;
+    if (id == null || isClosed || _connectingId != null || _suspended) return;
     final agent = _agentFor(id);
     if (agent == null || _isAmbiguous(id)) {
       _scheduleReconnect();
@@ -448,6 +467,7 @@ class ConnectCubit extends Cubit<ConnectState> {
     _revokedIds
       ..addAll(revoked)
       ..removeAll({for (final device in registry) device.id});
+    if (revoked.contains(_linkNotice?.laptopId)) _clearLinkNotice();
     _registryError = null;
     unawaited(_inheritFingerprints(registry));
     _publish();
@@ -568,12 +588,23 @@ class ConnectCubit extends Cubit<ConnectState> {
   void _onTransportState(TransportState state) {
     switch (state) {
       case TransportState.disconnected:
+        final dropped = _connectedAgent;
+        final wasConnected = _wasConnected;
+        _wasConnected = false;
         _needsCode = false;
         _pairingAgent = null;
         _connectedAgent = null;
-        if (!_userDisconnected && _reconnectId != null) _scheduleReconnect();
+        final reconnectId = _reconnectId;
+        final resumed = _resumeId != null && _resumeId == reconnectId;
+        _resumeId = null;
+        if (!_userDisconnected && !_suspended && reconnectId != null) {
+          if (wasConnected || resumed) _showLost(dropped, reconnectId);
+          _scheduleReconnect();
+        }
       case TransportState.connected:
         _needsCode = false;
+        _wasConnected = true;
+        _resumeId = null;
         final paired = _pairingAgent;
         _pairingAgent = null;
         _reconnectId = paired?.id ?? _reconnectId;
@@ -581,6 +612,7 @@ class ConnectCubit extends Cubit<ConnectState> {
         _reconnectTimer?.cancel();
         _reconnectTimer = null;
         _syncConnected();
+        _showRestored();
         if (paired != null) unawaited(_trustAgent(paired));
       case TransportState.connecting:
       case TransportState.pairing:
@@ -589,8 +621,88 @@ class ConnectCubit extends Cubit<ConnectState> {
     _publish();
   }
 
+  void dismissLinkNotice() {
+    if (_linkNotice == null) return;
+    _clearLinkNotice();
+    _publish();
+  }
+
+  void _showLost(DiscoveredAgent? dropped, String reconnectId) {
+    _linkNotice = LinkNotice(
+      kind: LinkNoticeKind.lost,
+      laptopId: reconnectId,
+      laptop: _laptopName(dropped, reconnectId),
+    );
+    _linkTimer?.cancel();
+    _linkTimer = Timer(lostNoticeDuration, () {
+      _linkTimer = null;
+      final notice = _linkNotice;
+      if (notice?.kind != LinkNoticeKind.lost) return;
+      _linkNotice = notice!.moveTo(LinkNoticeKind.reconnecting);
+      _publish();
+    });
+  }
+
+  void _showRestored() {
+    final notice = _linkNotice;
+    if (notice == null || notice.kind == LinkNoticeKind.restored) return;
+    _linkNotice = notice.moveTo(LinkNoticeKind.restored);
+    _linkTimer?.cancel();
+    _linkTimer = Timer(restoredNoticeDuration, () {
+      _linkTimer = null;
+      if (_linkNotice?.kind != LinkNoticeKind.restored) return;
+      _linkNotice = null;
+      _publish();
+    });
+  }
+
+  void _showGaveUp([String? detail]) {
+    final notice = _linkNotice;
+    if (notice == null) return;
+    if (notice.kind != LinkNoticeKind.lost &&
+        notice.kind != LinkNoticeKind.reconnecting) {
+      return;
+    }
+    _linkTimer?.cancel();
+    _linkTimer = null;
+    _linkNotice = notice.moveTo(LinkNoticeKind.gaveUp, detail: detail);
+  }
+
+  void _clearLinkNotice() {
+    _linkTimer?.cancel();
+    _linkTimer = null;
+    _linkNotice = null;
+  }
+
+  void appPaused() {
+    _suspended = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+  }
+
+  void appResumed() {
+    if (!_suspended) return;
+    _suspended = false;
+    final id = _reconnectId;
+    if (_userDisconnected || id == null) return;
+    if (_transport.state != TransportState.disconnected) return;
+    _reconnectAttempt = 0;
+    _resumeId = id;
+    unawaited(_attemptReconnect());
+  }
+
+  String _laptopName(DiscoveredAgent? dropped, String id) {
+    final agent = dropped ?? _agentFor(id);
+    if (agent != null) return LaptopName.shown(agent.name);
+    for (final device in _trusted) {
+      if (device.id == id) return LaptopName.shown(device.name);
+    }
+    return 'the laptop';
+  }
+
   void _onCodeRequested(void _) {
     if (_transport.peerFingerprint == null) return;
+    _clearLinkNotice();
     _cancelReconnect();
     _askForCode();
     _codeRequested = true;
@@ -600,7 +712,10 @@ class ConnectCubit extends Cubit<ConnectState> {
   void _onPairingError(Failure failure) {
     _connectionError = failure.message;
     final refused = !_codeRequested && failure is! TransportFailure;
-    if (failure is VersionFailure || refused) _cancelReconnect();
+    if (failure is VersionFailure || refused) {
+      _showGaveUp(failure.message);
+      _cancelReconnect();
+    }
     _publish();
   }
 
@@ -703,6 +818,7 @@ class ConnectCubit extends Cubit<ConnectState> {
         connectionError: _connectionError,
         registryError: _registryError,
         bluetooth: _bluetoothSection(),
+        linkNotice: _linkNotice,
       ),
     );
   }
@@ -767,6 +883,7 @@ class ConnectCubit extends Cubit<ConnectState> {
     _bluetoothErrors?.cancel();
     _bluetoothTimeout?.cancel();
     _reconnectTimer?.cancel();
+    _linkTimer?.cancel();
     unawaited(_browser.stop());
     return super.close();
   }
